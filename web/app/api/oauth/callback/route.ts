@@ -29,18 +29,19 @@ function getSecret() {
 
 export async function GET(request: Request) {
   try {
+    const origin = getOrigin(request);
     const { searchParams } = new URL(request.url);
     const error = searchParams.get("error");
     if (error) {
       return NextResponse.redirect(
-        new URL(`/?error=${encodeURIComponent(error)}`, request.url),
+        new URL(`/?error=${encodeURIComponent(error)}`, origin),
       );
     }
     const code = searchParams.get("code");
     const state = searchParams.get("state");
     if (!code) {
       return NextResponse.redirect(
-        new URL("/?error=missing_code", request.url),
+        new URL("/?error=missing_code", origin),
       );
     }
 
@@ -48,13 +49,12 @@ export async function GET(request: Request) {
     const savedState = cookieStore.get("oauth_state")?.value;
     if (!savedState || savedState !== state) {
       return NextResponse.redirect(
-        new URL("/?error=invalid_state", request.url),
+        new URL("/?error=invalid_state", origin),
       );
     }
     cookieStore.delete("oauth_state");
 
     const secret = getSecret();
-    const origin = getOrigin(request);
     const redirectUri = `${origin}/api/oauth/callback`;
     const client = new google.auth.OAuth2(
       secret.client_id,
@@ -64,7 +64,7 @@ export async function GET(request: Request) {
     const { tokens } = await client.getToken(code);
     if (!tokens.refresh_token) {
       return NextResponse.redirect(
-        new URL("/?error=no_refresh_token", request.url),
+        new URL("/?error=no_refresh_token", origin),
       );
     }
 
@@ -94,13 +94,13 @@ export async function GET(request: Request) {
     );
 
     return NextResponse.redirect(
-      new URL(`/?connected=${encodeURIComponent(email)}`, request.url),
+      new URL(`/?connected=${encodeURIComponent(email)}`, origin),
     );
   } catch (e: any) {
     return NextResponse.redirect(
       new URL(
         `/?error=${encodeURIComponent(e.message || "callback_failed")}`,
-        request.url,
+        getOrigin(request),
       ),
     );
   }
