@@ -5,10 +5,19 @@ venv/
 # Token files and secrets
 client_secret.json
 token_files/
+data/
 *.log
 __pycache__/
 *.pyc
 
+# Local campaign content
+emails.txt
+body.txt
+
+# Next.js build dependencies and output
+web/node_modules/
+web/.next/
+web/tsconfig.tsbuildinfo
+
 # Mac/Windows files
 .DS_Store
-
