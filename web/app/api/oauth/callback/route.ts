@@ -7,6 +7,20 @@ import { TOKEN_DIR, PROJECT_ROOT } from "@/lib/gmail";
 
 const SCOPES = ["https://mail.google.com/"];
 
+function getOrigin(request: Request): string {
+  const proto =
+    request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim() || "http";
+  const host = (
+    request.headers.get("x-forwarded-host") ??
+    request.headers.get("host") ??
+    ""
+  )
+    .split(",")[0]
+    .trim();
+  if (host) return `${proto}://${host}`;
+  return new URL(request.url).origin;
+}
+
 function getSecret() {
   const secretPath = path.join(PROJECT_ROOT, "client_secret.json");
   const raw = JSON.parse(fs.readFileSync(secretPath, "utf8"));
@@ -40,7 +54,7 @@ export async function GET(request: Request) {
     cookieStore.delete("oauth_state");
 
     const secret = getSecret();
-    const origin = new URL(request.url).origin;
+    const origin = getOrigin(request);
     const redirectUri = `${origin}/api/oauth/callback`;
     const client = new google.auth.OAuth2(
       secret.client_id,
