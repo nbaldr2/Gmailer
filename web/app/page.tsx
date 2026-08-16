@@ -110,18 +110,6 @@ function recipientsToText(recipients: RecipientRow[]): string {
   return recipients.map((r) => r.email).join("\n");
 }
 
-function mergeRecipients(existing: RecipientRow[], emails: string[]): RecipientRow[] {
-  const map = new Map<string, RecipientRow>();
-  for (const r of existing) map.set(r.email.toLowerCase(), r);
-  for (const email of emails) {
-    const e = email.trim();
-    if (!e) continue;
-    const k = e.toLowerCase();
-    if (!map.has(k)) map.set(k, { email: e });
-  }
-  return [...map.values()];
-}
-
 export default function Home() {
   const [tab, setTab] = useState<Tab>("compose");
   const [accounts, setAccounts] = useState<string[]>([]);
@@ -222,13 +210,7 @@ export default function Home() {
       const res = await fetch(`/api/files/${name}`);
       const d = await res.json();
       if (!d.success) { setError(d.message); return; }
-      if (name === "emails.txt") {
-        const list = d.content
-          .split(/\r?\n/)
-          .map((l: string) => l.trim())
-          .filter(Boolean);
-        setRecipients((prev) => mergeRecipients(prev, list));
-      } else setBody(d.content);
+      setBody(d.content);
       setError("");
     } catch (e: any) {
       setError(e.message);
@@ -248,18 +230,22 @@ export default function Home() {
       const map = new Map<string, RecipientRow>();
       for (const r of recipients) map.set(r.email.toLowerCase(), r);
       for (const r of parsed) map.set(r.email.toLowerCase(), r);
-      setRecipients([...map.values()]);
+      const merged = [...map.values()];
+      setRecipients(merged);
+      setRecipientsText(recipientsToText(merged));
       setError("");
     };
     reader.readAsText(file);
   };
 
-  useEffect(() => { setRecipientsText(recipientsToText(recipients)); }, [recipients]);
-
   const handleTextareaChange = (text: string) => {
     setRecipientsText(text);
     const emails = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-    setRecipients((prev) => mergeRecipients(prev, emails));
+    setRecipients((prev) => {
+      const prevMap = new Map<string, RecipientRow>();
+      for (const r of prev) prevMap.set(r.email.toLowerCase(), r);
+      return emails.map((email) => prevMap.get(email.toLowerCase()) ?? { email });
+    });
   };
 
   useEffect(() => {
@@ -579,7 +565,6 @@ export default function Home() {
             <p className="section-eyebrow">Recipient care</p>
             <h2>Grow your list</h2>
             <div className="row-gap mb-10">
-              <button type="button" className="link-btn" onClick={() => loadFile("emails.txt")}>Load emails.txt</button>
               <label className="link-btn file-label">
                 Upload CSV
                 <input type="file" accept=".csv,.txt" onChange={handleCsvUpload} className="hidden-input" />
