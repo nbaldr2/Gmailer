@@ -44,7 +44,6 @@ interface AuditEntry {
 interface SendStats {
   total: number;
   invalid: number;
-  dupes: number;
   suppressed: number;
   ready: number;
 }
@@ -679,7 +678,7 @@ export default function Home() {
         {error && <p className={`${error.startsWith("Suppression") ? "ok" : "error"}`}>{error}</p>}
         {stats && (
           <span className="muted">
-            Ready: {stats.ready} | Invalid: {stats.invalid} | Dupes: {stats.dupes} | Suppressed: {stats.suppressed}
+            Ready: {stats.ready} | Invalid: {stats.invalid} | Suppressed: {stats.suppressed}
           </span>
         )}
       </div>

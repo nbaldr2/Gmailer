@@ -65,19 +65,12 @@ export async function POST(request: Request) {
 
     const recipients: RecipientRow[] = [];
     const invalid: string[] = [];
-    const dupes: string[] = [];
-    const seen = new Set<string>();
     for (const r of rawRecipients) {
       const email = String(r.email ?? "").trim();
       if (!validateEmail(email)) {
         invalid.push(email || "(empty)");
         continue;
       }
-      if (seen.has(email.toLowerCase())) {
-        dupes.push(email);
-        continue;
-      }
-      seen.add(email.toLowerCase());
       recipients.push({ ...r, email });
     }
 
@@ -97,8 +90,8 @@ export async function POST(request: Request) {
     if (filtered.length === 0) {
       return NextResponse.json({
         success: false,
-        message: `All ${total} recipients are invalid, suppressed, or duplicated`,
-        stats: { total, invalid: invalid.length, dupes: dupes.length, suppressed: suppressed.length, ready: 0 },
+        message: `All ${total} recipients are invalid or suppressed`,
+        stats: { total, invalid: invalid.length, suppressed: suppressed.length, ready: 0 },
       });
     }
 
@@ -120,7 +113,6 @@ export async function POST(request: Request) {
       stats: {
         total,
         invalid: invalid.length,
-        dupes: dupes.length,
         suppressed: suppressed.length,
         ready: filtered.length,
       },
