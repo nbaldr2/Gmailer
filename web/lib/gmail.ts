@@ -131,3 +131,36 @@ export async function sendWithService(
   });
   return res.data;
 }
+
+export async function listSentMessages(
+  email: string,
+  maxResults = 500,
+): Promise<string[]> {
+  const gmail = createGmailService(email);
+  const ids: string[] = [];
+  let pageToken: string | undefined;
+  while (ids.length < maxResults) {
+    const res = await gmail.users.messages.list({
+      userId: "me",
+      labelIds: ["SENT"],
+      maxResults: Math.min(500, maxResults - ids.length),
+      pageToken,
+    });
+    if (res.data.messages) {
+      for (const m of res.data.messages) {
+        if (m.id) ids.push(m.id);
+      }
+    }
+    pageToken = res.data.nextPageToken ?? undefined;
+    if (!pageToken || ids.length >= maxResults) break;
+  }
+  return ids;
+}
+
+export async function trashMessage(email: string, messageId: string): Promise<void> {
+  const gmail = createGmailService(email);
+  await gmail.users.messages.trash({
+    userId: "me",
+    id: messageId,
+  });
+}

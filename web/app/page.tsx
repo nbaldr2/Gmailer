@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { resolveTemplate, RecipientRow, validateEmail } from "@/lib/template";
 
-type Tab = "compose" | "recipients" | "settings" | "logs";
+type Tab = "compose" | "recipients" | "settings" | "logs" | "clean";
 
 interface JobPerAccount {
   done: number;
@@ -135,6 +135,10 @@ export default function Home() {
   const [testStatus, setTestStatus] = useState("");
   const [invalidEmails, setInvalidEmails] = useState<string[]>([]);
   const [copiedVar, setCopiedVar] = useState<string>("");
+  const [cleaning, setCleaning] = useState(false);
+  const [cleanResults, setCleanResults] = useState<
+    Record<string, { total: number; deleted: number; error?: string }> | null
+  >(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const copyVar = useCallback(async (v: string) => {
@@ -202,6 +206,33 @@ export default function Home() {
         return next;
       });
     } catch (e: any) { setError(e.message); }
+  };
+
+  const cleanSent = async () => {
+    const accts = [...selected];
+    if (accts.length === 0) { setError("Select at least one account."); return; }
+    if (
+      !window.confirm(
+        `Move ALL sent messages to trash for:\n${accts.join("\n")}\n\nThis cannot be undone. Continue?`,
+      )
+    )
+      return;
+    setError("");
+    setCleaning(true);
+    setCleanResults(null);
+    try {
+      const res = await fetch("/api/clean-sent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accounts: accts }),
+      });
+      const d = await res.json();
+      if (!d.success) { setError(d.message); setCleaning(false); return; }
+      setCleanResults(d.results);
+    } catch (e: any) {
+      setError(e.message);
+    }
+    setCleaning(false);
   };
 
   const loadFile = async (name: string) => {
@@ -667,6 +698,79 @@ export default function Home() {
             ))}
           </div>
         </section>
+      )}
+
+      {tab === "clean" && (
+        <div className="grid">
+          <section className="panel compose-sidebar">
+            <p className="section-eyebrow">Inbox hygiene</p>
+            <h2>Choose accounts</h2>
+            <div className="account-list">
+              <div className="account-row">
+                <label className="account-label">
+                  <input type="checkbox" checked={accounts.length > 0 && selected.size === accounts.length} onChange={toggleAll} />
+                  <span className="account-name">All accounts</span>
+                </label>
+              </div>
+              {accounts.map((email) => (
+                <div key={email} className="account-row">
+                  <label className="account-label">
+                    <input type="checkbox" checked={selected.has(email)} onChange={() => toggleAccount(email)} />
+                    <span className="account-name">{email}</span>
+                  </label>
+                </div>
+              ))}
+            </div>
+            {accounts.length === 0 && (
+              <p className="muted">No accounts connected. Connect via the Compose tab first.</p>
+            )}
+            <button
+              type="button"
+              className="send-btn mt-10"
+              onClick={cleanSent}
+              disabled={cleaning || selected.size === 0}
+            >
+              {cleaning ? "Cleaning..." : "Clean sent folder"}
+            </button>
+            <p className="muted mt-6">
+              Fetches sent messages and moves them to trash one by one with a 0.5–1.5s random delay per message, emulating normal human behavior. Deleted messages stay in Trash for 30 days before permanent removal.
+            </p>
+          </section>
+          <section className="panel">
+            <p className="section-eyebrow">Progress</p>
+            <h2>Results</h2>
+            {!cleanResults && !cleaning && (
+              <p className="muted">Select accounts above and click Clean to begin.</p>
+            )}
+            {cleaning && <p className="muted">Deleting messages with human-like delays...</p>}
+            {cleanResults && (
+              <div className="account-progress">
+                {Object.entries(cleanResults).map(([email, r]) => (
+                  <div key={email} className="acct-chip">
+                    <span className="acct-name">{email}</span>
+                    {r.error ? (
+                      <span className="fail">{r.error}</span>
+                    ) : r.total === 0 ? (
+                      <span className="muted">No sent messages found</span>
+                    ) : (
+                      <>
+                        <span className="ok">{r.deleted} deleted</span>
+                        <span className="fail">{r.total - r.deleted} failed</span>
+                      </>
+                    )}
+                  </div>
+                ))}
+                <div className="stats-row">
+                  <span className="ok">
+                    Total deleted:{" "}
+                    {Object.values(cleanResults).reduce((s, r) => s + (r.deleted ?? 0), 0)}
+                  </span>
+                </div>
+              </div>
+            )}
+            {error && <p className="error mt-10">{error}</p>}
+          </section>
+        </div>
       )}
 
       <div className="actions send-dock">
