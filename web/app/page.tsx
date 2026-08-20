@@ -30,6 +30,19 @@ interface Job {
   logs: JobLog[];
 }
 
+interface CleanAccountProgress {
+  total: number;
+  deleted: number;
+  failed: number;
+  error?: string;
+}
+
+interface CleanJob {
+  id: string;
+  status: "running" | "done";
+  accounts: Record<string, CleanAccountProgress>;
+}
+
 interface AuditEntry {
   ts: string;
   campaign: string;
@@ -109,6 +122,13 @@ function recipientsToText(recipients: RecipientRow[]): string {
   return recipients.map((r) => r.email).join("\n");
 }
 
+async function parseApiJson(response: Response) {
+  if (!response.headers.get("content-type")?.includes("application/json")) {
+    throw new Error("The server returned an unexpected response. Refresh the page and try again.");
+  }
+  return response.json();
+}
+
 export default function Home() {
   const [tab, setTab] = useState<Tab>("compose");
   const [accounts, setAccounts] = useState<string[]>([]);
@@ -137,9 +157,10 @@ export default function Home() {
   const [copiedVar, setCopiedVar] = useState<string>("");
   const [cleaning, setCleaning] = useState(false);
   const [cleanResults, setCleanResults] = useState<
-    Record<string, { total: number; deleted: number; error?: string }> | null
+    Record<string, CleanAccountProgress> | null
   >(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const cleanPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const copyVar = useCallback(async (v: string) => {
     try {
@@ -158,12 +179,22 @@ export default function Home() {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
   }, []);
 
+  const stopCleanPolling = useCallback(() => {
+    if (cleanPollRef.current) {
+      clearInterval(cleanPollRef.current);
+      cleanPollRef.current = null;
+    }
+  }, []);
+
   useEffect(() => {
     fetch("/api/accounts")
       .then((r) => r.json())
       .then((d) => { if (d.success) setAccounts(d.accounts.map((a: { email: string }) => a.email)); });
-    return stopPolling;
-  }, [stopPolling]);
+    return () => {
+      stopPolling();
+      stopCleanPolling();
+    };
+  }, [stopPolling, stopCleanPolling]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -208,6 +239,28 @@ export default function Home() {
     } catch (e: any) { setError(e.message); }
   };
 
+  const pollCleanJob = useCallback((jobId: string) => {
+    stopCleanPolling();
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/clean-sent?id=${encodeURIComponent(jobId)}`);
+        const d = await parseApiJson(res) as { success: boolean; message?: string; job?: CleanJob };
+        if (!d.success || !d.job) throw new Error(d.message || "Unable to read cleanup progress.");
+        setCleanResults(d.job.accounts);
+        if (d.job.status === "done") {
+          setCleaning(false);
+          stopCleanPolling();
+        }
+      } catch (e: any) {
+        setError(e.message);
+        setCleaning(false);
+        stopCleanPolling();
+      }
+    };
+    void poll();
+    cleanPollRef.current = setInterval(() => void poll(), 1000);
+  }, [stopCleanPolling]);
+
   const cleanSent = async () => {
     const accts = [...selected];
     if (accts.length === 0) { setError("Select at least one account."); return; }
@@ -226,13 +279,15 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ accounts: accts }),
       });
-      const d = await res.json();
-      if (!d.success) { setError(d.message); setCleaning(false); return; }
-      setCleanResults(d.results);
+      const d = await parseApiJson(res) as { success: boolean; message?: string; job?: CleanJob };
+      if (!d.success) { setError(d.message || "Unable to start cleanup."); setCleaning(false); return; }
+      if (!d.job) { setError("Cleanup job was not created."); setCleaning(false); return; }
+      setCleanResults(d.job.accounts);
+      pollCleanJob(d.job.id);
     } catch (e: any) {
       setError(e.message);
+      setCleaning(false);
     }
-    setCleaning(false);
   };
 
   const loadFile = async (name: string) => {
@@ -755,7 +810,7 @@ export default function Home() {
                     ) : (
                       <>
                         <span className="ok">{r.deleted} deleted</span>
-                        <span className="fail">{r.total - r.deleted} failed</span>
+                        <span className="fail">{r.failed} failed</span>
                       </>
                     )}
                   </div>

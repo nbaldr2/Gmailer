@@ -134,7 +134,7 @@ export async function sendWithService(
 
 export async function listSentMessages(
   email: string,
-  maxResults = 500,
+  maxResults = Number.MAX_SAFE_INTEGER,
 ): Promise<string[]> {
   const gmail = createGmailService(email);
   const ids: string[] = [];
