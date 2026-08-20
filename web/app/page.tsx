@@ -442,7 +442,7 @@ export default function Home() {
       </header>
 
       <nav className="tabs" aria-label="Mailer sections">
-        {(["compose", "recipients", "settings", "logs"] as Tab[]).map((t) => (
+        {(["compose", "recipients", "settings", "logs", "clean"] as Tab[]).map((t) => (
           <button
             key={t}
             className={`tab-btn ${tab === t ? "active" : ""}`}
