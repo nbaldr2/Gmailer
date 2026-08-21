@@ -37,6 +37,11 @@ export interface RejectedCampaign {
   rejections: RejectedRecipient[];
 }
 
+export interface AccountCooldown {
+  cooldownUntil: string;
+  reason: string;
+}
+
 const globalWithDb = globalThis as typeof globalThis & {
   __gmailerDbPool?: Pool;
   __gmailerDbSchema?: Promise<void>;
@@ -96,9 +101,58 @@ async function ensureSchema(): Promise<void> {
         processed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         PRIMARY KEY (sender_account, gmail_message_id)
       );
+      CREATE TABLE IF NOT EXISTS account_cooldowns (
+        account_email TEXT PRIMARY KEY,
+        cooldown_until TIMESTAMPTZ NOT NULL,
+        reason TEXT NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
     `);
   })();
   return globalWithDb.__gmailerDbSchema;
+}
+
+export function isAccountCooldownError(reason: string): boolean {
+  return /message rejected|reached a limit for sending|sending limit|sending quota|daily user sending quota|rate limit|user.?rate.?limit|too many requests|account.+limit/i.test(reason);
+}
+
+export async function setAccountCooldown(
+  accountEmail: string,
+  reason: string,
+): Promise<void> {
+  const pool = await db();
+  const cooldownUntil = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  await pool.query(
+    `INSERT INTO account_cooldowns (account_email, cooldown_until, reason)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (account_email) DO UPDATE
+     SET cooldown_until = GREATEST(account_cooldowns.cooldown_until, EXCLUDED.cooldown_until),
+         reason = EXCLUDED.reason,
+         updated_at = NOW()`,
+    [accountEmail, cooldownUntil, reason.slice(0, 1200)],
+  );
+}
+
+export async function getAccountCooldowns(
+  accounts: string[],
+): Promise<Record<string, AccountCooldown>> {
+  const pool = await db();
+  await pool.query("DELETE FROM account_cooldowns WHERE cooldown_until <= NOW()");
+  if (accounts.length === 0) return {};
+  const result = await pool.query<{
+    account_email: string;
+    cooldown_until: string;
+    reason: string;
+  }>(
+    `SELECT account_email, cooldown_until, reason
+     FROM account_cooldowns
+     WHERE account_email = ANY($1::text[])`,
+    [accounts],
+  );
+  return Object.fromEntries(result.rows.map((row) => [
+    row.account_email,
+    { cooldownUntil: row.cooldown_until, reason: row.reason },
+  ]));
 }
 
 async function db(): Promise<Pool> {

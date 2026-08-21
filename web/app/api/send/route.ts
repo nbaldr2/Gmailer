@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createJob, runJob, SendSettings } from "@/lib/jobs";
 import { RecipientRow, validateEmail } from "@/lib/template";
 import { getSuppressionList } from "@/lib/store";
-import { createCampaign } from "@/lib/rejections-db";
+import { createCampaign, getAccountCooldowns } from "@/lib/rejections-db";
 
 const DEFAULT_SETTINGS: SendSettings = {
   rateLimitMs: 1000,
@@ -43,6 +43,18 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { success: false, message: "No accounts selected" },
         { status: 400 },
+      );
+    }
+    const cooldowns = await getAccountCooldowns(accounts);
+    const activeAccounts = accounts.filter((account) => !cooldowns[account]);
+    if (activeAccounts.length === 0) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "All selected accounts are in a 24-hour sending cooldown.",
+          cooldowns,
+        },
+        { status: 429 },
       );
     }
     if (rawRecipients.length === 0) {
@@ -96,12 +108,12 @@ export async function POST(request: Request) {
       });
     }
 
-    const jobId = createJob(filtered.length, skipped, accounts, campaign);
+    const jobId = createJob(filtered.length, skipped, activeAccounts, campaign);
     await createCampaign(jobId, campaign, fromName);
     runJob(
       jobId,
       campaign,
-      accounts,
+      activeAccounts,
       filtered,
       rawSubjects,
       fromName,
@@ -117,6 +129,7 @@ export async function POST(request: Request) {
         invalid: invalid.length,
         suppressed: suppressed.length,
         ready: filtered.length,
+        cooledDownAccounts: accounts.length - activeAccounts.length,
       },
     });
   } catch (e: any) {

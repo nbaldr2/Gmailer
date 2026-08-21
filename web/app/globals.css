@@ -352,6 +352,27 @@ button {
   accent-color: var(--green);
 }
 
+.account-row input:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.account-status-dot {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  background: #4e9a61;
+  border: 1px solid #2d7140;
+  border-radius: 999px;
+  box-shadow: 0 0 0 3px rgba(78, 154, 97, 0.14);
+}
+
+.account-status-dot.cooldown {
+  background: #d95f52;
+  border-color: #a43e35;
+  box-shadow: 0 0 0 3px rgba(217, 95, 82, 0.14);
+}
+
 .trash-btn {
   display: inline-flex;
   flex: 0 0 auto;

@@ -102,6 +102,12 @@ interface SendStats {
   invalid: number;
   suppressed: number;
   ready: number;
+  cooledDownAccounts?: number;
+}
+
+interface AccountCooldown {
+  cooldownUntil: string;
+  reason: string;
 }
 
 const SAMPLE: RecipientRow = {
@@ -175,6 +181,7 @@ async function parseApiJson(response: Response) {
 export default function Home() {
   const [tab, setTab] = useState<Tab>("compose");
   const [accounts, setAccounts] = useState<string[]>([]);
+  const [accountCooldowns, setAccountCooldowns] = useState<Record<string, AccountCooldown>>({});
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [recipients, setRecipients] = useState<RecipientRow[]>([]);
   const [recipientsText, setRecipientsText] = useState("");
@@ -243,16 +250,35 @@ export default function Home() {
     }
   }, []);
 
+  const loadAccounts = useCallback(async () => {
+    try {
+      const res = await fetch("/api/accounts");
+      const d = await parseApiJson(res) as {
+        success: boolean;
+        accounts?: Array<{ email: string; cooldown?: AccountCooldown | null }>;
+      };
+      if (!d.success || !d.accounts) return;
+      setAccounts(d.accounts.map((account) => account.email));
+      const cooldowns = Object.fromEntries(
+        d.accounts.flatMap((account) => account.cooldown
+          ? [[account.email, account.cooldown] as const]
+          : []),
+      );
+      setAccountCooldowns(cooldowns);
+      setSelected((prev) => new Set([...prev].filter((email) => !cooldowns[email])));
+    } catch (e) {
+      console.error("Unable to load accounts:", e);
+    }
+  }, []);
+
   useEffect(() => {
-    fetch("/api/accounts")
-      .then((r) => r.json())
-      .then((d) => { if (d.success) setAccounts(d.accounts.map((a: { email: string }) => a.email)); });
+    void loadAccounts();
     return () => {
       stopPolling();
       stopCleanPolling();
       stopBouncePolling();
     };
-  }, [stopPolling, stopCleanPolling, stopBouncePolling]);
+  }, [loadAccounts, stopPolling, stopCleanPolling, stopBouncePolling]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -268,15 +294,19 @@ export default function Home() {
   }, []);
 
   const toggleAccount = (email: string) => {
+    if (accountCooldowns[email]) return;
     setSelected((prev) => {
       const next = new Set(prev);
       next.has(email) ? next.delete(email) : next.add(email);
       return next;
     });
   };
+  const availableAccounts = accounts.filter((email) => !accountCooldowns[email]);
   const toggleAll = () =>
     setSelected((prev) =>
-      prev.size === accounts.length ? new Set() : new Set(accounts),
+      availableAccounts.length > 0 && availableAccounts.every((email) => prev.has(email))
+        ? new Set()
+        : new Set(availableAccounts),
     );
 
   const removeAccount = async (email: string) => {
@@ -289,6 +319,11 @@ export default function Home() {
       const d = await res.json();
       if (!d.success) { setError(d.message); return; }
       setAccounts((prev) => prev.filter((a) => a !== email));
+      setAccountCooldowns((prev) => {
+        const next = { ...prev };
+        delete next[email];
+        return next;
+      });
       setSelected((prev) => {
         const next = new Set(prev);
         next.delete(email);
@@ -418,12 +453,16 @@ export default function Home() {
           const d = await res.json();
           if (d.success) {
             setJob(d.job);
-            if (d.job.status === "done") stopPolling();
+            if (d.job.status === "done") {
+              stopPolling();
+              setSending(false);
+              void loadAccounts();
+            }
           }
         } catch { /* poll silently */ }
       }, 700);
     },
-    [stopPolling],
+    [loadAccounts, stopPolling],
   );
 
   const send = async () => {
@@ -678,14 +717,20 @@ export default function Home() {
             <div className="account-list">
               <div className="account-row">
                 <label className="account-label">
-                  <input type="checkbox" checked={accounts.length > 0 && selected.size === accounts.length} onChange={toggleAll} />
-                  <span className="account-name">All accounts</span>
+                  <input type="checkbox" checked={availableAccounts.length > 0 && availableAccounts.every((email) => selected.has(email))} onChange={toggleAll} />
+                  <span className="account-name">All available accounts</span>
                 </label>
               </div>
               {accounts.map((email) => (
                 <div key={email} className="account-row">
                   <label className="account-label">
-                    <input type="checkbox" checked={selected.has(email)} onChange={() => toggleAccount(email)} />
+                    <input type="checkbox" checked={selected.has(email)} onChange={() => toggleAccount(email)} disabled={Boolean(accountCooldowns[email])} />
+                    <span
+                      className={`account-status-dot ${accountCooldowns[email] ? "cooldown" : ""}`}
+                      title={accountCooldowns[email]
+                        ? `Cooldown until ${new Date(accountCooldowns[email].cooldownUntil).toLocaleString()}: ${accountCooldowns[email].reason}`
+                        : "Available to send"}
+                    />
                     <span className="account-name">{email}</span>
                   </label>
                   <button
@@ -1000,14 +1045,20 @@ export default function Home() {
             <div className="account-list">
               <div className="account-row">
                 <label className="account-label">
-                  <input type="checkbox" checked={accounts.length > 0 && selected.size === accounts.length} onChange={toggleAll} />
-                  <span className="account-name">All accounts</span>
+                  <input type="checkbox" checked={availableAccounts.length > 0 && availableAccounts.every((email) => selected.has(email))} onChange={toggleAll} />
+                  <span className="account-name">All available accounts</span>
                 </label>
               </div>
               {accounts.map((email) => (
                 <div key={email} className="account-row">
                   <label className="account-label">
-                    <input type="checkbox" checked={selected.has(email)} onChange={() => toggleAccount(email)} />
+                    <input type="checkbox" checked={selected.has(email)} onChange={() => toggleAccount(email)} disabled={Boolean(accountCooldowns[email])} />
+                    <span
+                      className={`account-status-dot ${accountCooldowns[email] ? "cooldown" : ""}`}
+                      title={accountCooldowns[email]
+                        ? `Cooldown until ${new Date(accountCooldowns[email].cooldownUntil).toLocaleString()}: ${accountCooldowns[email].reason}`
+                        : "Available to send"}
+                    />
                     <span className="account-name">{email}</span>
                   </label>
                 </div>
@@ -1098,6 +1149,7 @@ export default function Home() {
         {stats && (
           <span className="muted">
             Ready: {stats.ready} | Invalid: {stats.invalid} | Suppressed: {stats.suppressed}
+            {stats.cooledDownAccounts ? ` | Cooled down: ${stats.cooledDownAccounts}` : ""}
           </span>
         )}
       </div>

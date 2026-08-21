@@ -1,7 +1,12 @@
 import { createGmailService, listAccounts, sendWithService } from "./gmail";
 import { RecipientRow, resolveTemplate } from "./template";
 import { appendAudit } from "./store";
-import { recordCampaignDelivery, recordRejection } from "./rejections-db";
+import {
+  isAccountCooldownError,
+  recordCampaignDelivery,
+  recordRejection,
+  setAccountCooldown,
+} from "./rejections-db";
 import { startRejectionMonitor } from "./rejection-monitor";
 
 export interface JobLog {
@@ -193,6 +198,7 @@ export async function runJob(
           kind: "ok",
         });
       } catch (e: any) {
+        const failureReason = e.message || String(e);
         const job = jobs.get(jobId);
         if (job) {
           job.failed++;
@@ -205,7 +211,7 @@ export async function runJob(
           recipient: recipient.email,
           account,
           status: "failed",
-          error: e.message || String(e),
+          error: failureReason,
         });
         try {
           const deliveryId = await recordCampaignDelivery({
@@ -214,7 +220,7 @@ export async function runJob(
             senderAccount: account,
             subject: resolvedSubject,
             status: "rejected",
-            error: e.message || String(e),
+            error: failureReason,
           });
           await recordRejection({
             campaignId: jobId,
@@ -222,7 +228,7 @@ export async function runJob(
             recipientEmail: recipient.email,
             senderAccount: account,
             kind: "gmail_api",
-            reason: e.message || String(e),
+            reason: failureReason,
           });
         } catch (dbError) {
           console.error("Unable to record rejected delivery:", dbError);
@@ -230,9 +236,28 @@ export async function runJob(
         pushLog(jobId, {
           ts: Date.now(),
           account,
-          message: `FAILED ${recipient.email}: ${e.message || String(e)}`,
+          message: `FAILED ${recipient.email}: ${failureReason}`,
           kind: "fail",
         });
+        if (isAccountCooldownError(failureReason)) {
+          try {
+            await setAccountCooldown(account, failureReason);
+          } catch (dbError) {
+            console.error("Unable to set account cooldown:", dbError);
+          }
+          const remaining = chunk.length - j - 1;
+          if (job) {
+            job.skipped += remaining;
+            job.perAccount[account].done += remaining;
+          }
+          pushLog(jobId, {
+            ts: Date.now(),
+            account,
+            message: "Account entered a 24-hour cooldown after a Gmail rejection.",
+            kind: "info",
+          });
+          break;
+        }
       }
     }
   });

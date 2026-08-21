@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { sendOne } from "@/lib/gmail";
+import { getAccountCooldowns } from "@/lib/rejections-db";
 
 export async function POST(request: Request) {
   try {
@@ -14,6 +15,16 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { success: false, message: "account, to, subject, and html are required" },
         { status: 400 },
+      );
+    }
+    const cooldown = (await getAccountCooldowns([account]))[account];
+    if (cooldown) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: `Account is in cooldown until ${cooldown.cooldownUntil}.`,
+        },
+        { status: 429 },
       );
     }
 

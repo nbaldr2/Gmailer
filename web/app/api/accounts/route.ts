@@ -1,10 +1,23 @@
 import { NextResponse } from "next/server";
 import { deleteAccount, listAccounts } from "@/lib/gmail";
+import { AccountCooldown, getAccountCooldowns } from "@/lib/rejections-db";
 
 export async function GET() {
   try {
     const accounts = listAccounts();
-    return NextResponse.json({ success: true, accounts });
+    let cooldowns: Record<string, AccountCooldown> = {};
+    try {
+      cooldowns = await getAccountCooldowns(accounts.map((account) => account.email));
+    } catch (e) {
+      console.error("Unable to load account cooldowns:", e);
+    }
+    return NextResponse.json({
+      success: true,
+      accounts: accounts.map((account) => ({
+        ...account,
+        cooldown: cooldowns[account.email] ?? null,
+      })),
+    });
   } catch (e: any) {
     return NextResponse.json(
       { success: false, message: e.message || String(e) },

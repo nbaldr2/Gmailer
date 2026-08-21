@@ -4,7 +4,9 @@ import {
 } from "./gmail";
 import {
   claimBounceForProcessing,
+  isAccountCooldownError,
   recordMailerDaemonBounce,
+  setAccountCooldown,
 } from "./rejections-db";
 
 export interface BounceScanAccountProgress {
@@ -88,6 +90,13 @@ export async function scanBounceAccounts(
           continue;
         }
         const reason = parseReason(message.raw);
+        if (isAccountCooldownError(reason)) {
+          try {
+            await setAccountCooldown(account, reason);
+          } catch (dbError) {
+            console.error("Unable to set account cooldown:", dbError);
+          }
+        }
         for (const recipient of recipients) {
           if (await recordMailerDaemonBounce(account, message.id, recipient, reason)) {
             progress.imported++;
