@@ -38,6 +38,7 @@ export interface JobState {
 export interface SendSettings {
   rateLimitMs: number;
   maxPerAccount: number;
+  allowCooldownAccounts: boolean;
 }
 
 const globalWithJobs = globalThis as typeof globalThis & {
@@ -197,20 +198,22 @@ export async function runJob(
       const wait = settings.rateLimitMs - (Date.now() - lastSentAt);
       if (wait > 0) await sleep(wait);
       lastSentAt = Date.now();
-      try {
-        const cooldown = (await getAccountCooldowns([account]))[account];
-        if (cooldown) {
-          await stopAccountForCooldown(
-            account,
-            chunk,
-            j,
-            cooldown.reason,
-            Date.parse(cooldown.cooldownUntil),
-          );
-          break;
+      if (!settings.allowCooldownAccounts) {
+        try {
+          const cooldown = (await getAccountCooldowns([account]))[account];
+          if (cooldown) {
+            await stopAccountForCooldown(
+              account,
+              chunk,
+              j,
+              cooldown.reason,
+              Date.parse(cooldown.cooldownUntil),
+            );
+            break;
+          }
+        } catch (dbError) {
+          console.error("Unable to check account cooldown:", dbError);
         }
-      } catch (dbError) {
-        console.error("Unable to check account cooldown:", dbError);
       }
       const subject = subjects[Math.floor(Math.random() * subjects.length)];
       const resolvedSubject = resolveTemplate(subject, recipient);

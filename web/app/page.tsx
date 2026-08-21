@@ -200,6 +200,7 @@ export default function Home() {
   const [job, setJob] = useState<Job | null>(null);
   const [error, setError] = useState("");
   const [sending, setSending] = useState(false);
+  const [allowCooldownAccounts, setAllowCooldownAccounts] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
   const [testTo, setTestTo] = useState("");
   const [testAcc, setTestAcc] = useState("");
@@ -483,6 +484,7 @@ export default function Home() {
     if (!valid.length) { setError("No valid recipients."); return; }
     if (subjectLines.length === 0) { setError("Subject is required."); return; }
     if (!body.trim()) { setError("HTML body is required."); return; }
+    if (allowCooldownAccounts && !window.confirm("Force sending from red cooldown accounts for this test campaign? A fresh Gmail rejection will stop that sender and save its remaining assigned recipients as rejected.")) return;
     setSending(true);
     setJob(null);
     try {
@@ -498,6 +500,7 @@ export default function Home() {
           campaign: campaign.trim(),
           rateLimitMs,
           maxPerAccount,
+          allowCooldownAccounts,
         }),
       });
       const d = await res.json();
@@ -610,6 +613,21 @@ export default function Home() {
     void loadRejectionMonitors();
     setLoadingRejections(false);
   }, [loadRejectionMonitors]);
+
+  const deleteRejectedCampaign = async (campaign: RejectedCampaign) => {
+    if (!window.confirm(`Delete rejected campaign "${campaign.name}" and all ${campaign.rejections.length} stored rejection record(s)? This only removes PostgreSQL tracking data.`)) return;
+    try {
+      const res = await fetch(
+        `/api/rejections?campaignId=${encodeURIComponent(campaign.id)}`,
+        { method: "DELETE" },
+      );
+      const d = await parseApiJson(res) as { success: boolean; message?: string };
+      if (!d.success) throw new Error(d.message || "Unable to delete campaign.");
+      await loadRejections();
+    } catch (e: any) {
+      setError(e.message);
+    }
+  };
 
   const pollBounceScan = useCallback((jobId: string) => {
     stopBouncePolling();
@@ -1029,12 +1047,21 @@ export default function Home() {
                     <p className="muted">Campaign ID: <code>{campaign.id}</code></p>
                     <p className="muted">From name: {campaign.fromName || "(not set)"}</p>
                   </div>
-                  <a
-                    className="link-btn"
-                    href={`/api/rejections?format=csv&campaignId=${encodeURIComponent(campaign.id)}`}
-                  >
-                    Download CSV
-                  </a>
+                  <div className="row-gap">
+                    <a
+                      className="link-btn"
+                      href={`/api/rejections?format=csv&campaignId=${encodeURIComponent(campaign.id)}`}
+                    >
+                      Download CSV
+                    </a>
+                    <button
+                      type="button"
+                      className="link-btn danger-link"
+                      onClick={() => void deleteRejectedCampaign(campaign)}
+                    >
+                      Delete campaign
+                    </button>
+                  </div>
                 </div>
                 <div className="logs mt-6">
                   {campaign.rejections.map((rejection, index) => (
@@ -1162,6 +1189,10 @@ export default function Home() {
       )}
 
       <div className="actions send-dock">
+        <label className="cooldown-override">
+          <input type="checkbox" checked={allowCooldownAccounts} onChange={(e) => setAllowCooldownAccounts(e.target.checked)} />
+          Force send from red accounts for this test campaign
+        </label>
         <button type="button" className="send-btn" onClick={send} disabled={sending && !jobFinished}>
           <span className="send-icon" aria-hidden="true">+</span>
           {sending && !jobFinished ? "Delivering..." : "Begin delivery"}

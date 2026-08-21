@@ -872,6 +872,32 @@ details summary {
   font-size: 1.12rem;
 }
 
+.cooldown-override {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #9a4137;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.cooldown-override input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: #b24b40;
+}
+
+.danger-link {
+  color: #a74238;
+  border-color: rgba(196, 82, 70, 0.42);
+}
+
+.danger-link:hover {
+  color: #8d3028;
+  background: rgba(217, 95, 82, 0.12);
+}
+
 .log:last-child {
   border-bottom: none;
 }

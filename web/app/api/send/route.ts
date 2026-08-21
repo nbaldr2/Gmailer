@@ -9,6 +9,7 @@ import { startRejectionMonitor } from "@/lib/rejection-monitor";
 const DEFAULT_SETTINGS: SendSettings = {
   rateLimitMs: 1000,
   maxPerAccount: 500,
+  allowCooldownAccounts: false,
 };
 
 export async function POST(request: Request) {
@@ -39,6 +40,7 @@ export async function POST(request: Request) {
         typeof body.maxPerAccount === "number" && body.maxPerAccount >= 1
           ? body.maxPerAccount
           : DEFAULT_SETTINGS.maxPerAccount,
+      allowCooldownAccounts: body.allowCooldownAccounts === true,
     };
 
     if (accounts.length === 0) {
@@ -48,8 +50,10 @@ export async function POST(request: Request) {
       );
     }
     const cooldowns = await getAccountCooldowns(accounts);
-    const activeAccounts = accounts.filter((account) => !cooldowns[account]);
-    if (activeAccounts.length === 0) {
+    const sendAccounts = settings.allowCooldownAccounts
+      ? accounts
+      : accounts.filter((account) => !cooldowns[account]);
+    if (sendAccounts.length === 0) {
       return NextResponse.json(
         {
           success: false,
@@ -110,13 +114,13 @@ export async function POST(request: Request) {
       });
     }
 
-    const jobId = createJob(filtered.length, skipped, activeAccounts, campaign);
+    const jobId = createJob(filtered.length, skipped, sendAccounts, campaign);
     await createCampaign(jobId, campaign, fromName);
     startRejectionMonitor(jobId, listAccounts().map((account) => account.email));
     runJob(
       jobId,
       campaign,
-      activeAccounts,
+      sendAccounts,
       filtered,
       rawSubjects,
       fromName,
@@ -132,7 +136,7 @@ export async function POST(request: Request) {
         invalid: invalid.length,
         suppressed: suppressed.length,
         ready: filtered.length,
-        cooledDownAccounts: accounts.length - activeAccounts.length,
+        cooledDownAccounts: accounts.length - sendAccounts.length,
       },
     });
   } catch (e: any) {

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import {
+  deleteCampaign,
   listCampaignRejections,
   listRejectedCampaigns,
 } from "@/lib/rejections-db";
@@ -7,6 +8,31 @@ import {
 function csvCell(value: string | null | undefined): string {
   const text = value ?? "";
   return /[",\r\n]/.test(text) ? `"${text.replaceAll("\"", "\"\"")}"` : text;
+}
+
+export async function DELETE(request: Request) {
+  try {
+    const campaignId = new URL(request.url).searchParams.get("campaignId");
+    if (!campaignId) {
+      return NextResponse.json(
+        { success: false, message: "Campaign ID is required" },
+        { status: 400 },
+      );
+    }
+    const deleted = await deleteCampaign(campaignId);
+    if (!deleted) {
+      return NextResponse.json(
+        { success: false, message: "Campaign not found" },
+        { status: 404 },
+      );
+    }
+    return NextResponse.json({ success: true });
+  } catch (e: any) {
+    return NextResponse.json(
+      { success: false, message: e.message || String(e) },
+      { status: 500 },
+    );
+  }
 }
 
 export async function GET(request: Request) {

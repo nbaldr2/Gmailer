@@ -432,3 +432,12 @@ export async function listCampaignRejections(campaignId: string): Promise<Reject
     detectedAt: row.detected_at,
   }));
 }
+
+export async function deleteCampaign(campaignId: string): Promise<boolean> {
+  const pool = await db();
+  const result = await pool.query(
+    "DELETE FROM campaigns WHERE id = $1 RETURNING id",
+    [campaignId],
+  );
+  return result.rowCount !== 0;
+}
