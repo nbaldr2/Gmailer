@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import { createJob, runJob, SendSettings } from "@/lib/jobs";
 import { RecipientRow, validateEmail } from "@/lib/template";
+import { listAccounts } from "@/lib/gmail";
 import { getSuppressionList } from "@/lib/store";
 import { createCampaign, getAccountCooldowns } from "@/lib/rejections-db";
+import { startRejectionMonitor } from "@/lib/rejection-monitor";
 
 const DEFAULT_SETTINGS: SendSettings = {
   rateLimitMs: 1000,
@@ -110,6 +112,7 @@ export async function POST(request: Request) {
 
     const jobId = createJob(filtered.length, skipped, activeAccounts, campaign);
     await createCampaign(jobId, campaign, fromName);
+    startRejectionMonitor(jobId, listAccounts().map((account) => account.email));
     runJob(
       jobId,
       campaign,

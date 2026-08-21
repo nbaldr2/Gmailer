@@ -16,7 +16,7 @@ interface RejectionInput {
   deliveryId?: number;
   recipientEmail: string;
   senderAccount: string;
-  kind: "gmail_api" | "mailer_daemon";
+  kind: "gmail_api" | "mailer_daemon" | "account_cooldown";
   reason: string;
   bounceMessageId?: string;
 }
@@ -24,7 +24,7 @@ interface RejectionInput {
 export interface RejectedRecipient {
   recipientEmail: string;
   senderAccount: string;
-  kind: "gmail_api" | "mailer_daemon";
+  kind: "gmail_api" | "mailer_daemon" | "account_cooldown";
   reason: string;
   detectedAt: string;
 }
@@ -107,6 +107,11 @@ async function ensureSchema(): Promise<void> {
         reason TEXT NOT NULL,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
+      ALTER TABLE campaign_rejections
+        DROP CONSTRAINT IF EXISTS campaign_rejections_kind_check;
+      ALTER TABLE campaign_rejections
+        ADD CONSTRAINT campaign_rejections_kind_check
+        CHECK (kind IN ('gmail_api', 'mailer_daemon', 'account_cooldown'));
     `);
   })();
   return globalWithDb.__gmailerDbSchema;
@@ -213,6 +218,34 @@ export async function recordRejection(input: RejectionInput): Promise<void> {
   );
 }
 
+export async function recordAccountCooldownRejections(input: {
+  campaignId: string;
+  senderAccount: string;
+  recipients: Array<{ email: string; subject: string }>;
+  reason: string;
+}): Promise<number> {
+  if (input.recipients.length === 0) return 0;
+  const pool = await db();
+  const emails = input.recipients.map((recipient) => recipient.email);
+  const subjects = input.recipients.map((recipient) => recipient.subject);
+  const result = await pool.query<{ id: string }>(
+    `WITH inserted AS (
+       INSERT INTO campaign_deliveries
+         (campaign_id, recipient_email, sender_account, subject, status, error)
+       SELECT $1, pending.email, $2, pending.subject, 'rejected', $3
+       FROM UNNEST($4::text[], $5::text[]) AS pending(email, subject)
+       RETURNING id, recipient_email
+     )
+     INSERT INTO campaign_rejections
+       (campaign_id, delivery_id, recipient_email, sender_account, kind, reason)
+     SELECT $1, id, recipient_email, $2, 'account_cooldown', $3
+     FROM inserted
+     RETURNING id`,
+    [input.campaignId, input.senderAccount, input.reason.slice(0, 1200), emails, subjects],
+  );
+  return result.rowCount ?? 0;
+}
+
 export async function claimBounceForProcessing(
   senderAccount: string,
   bounceMessageId: string,
@@ -281,7 +314,7 @@ export async function listRejectedCampaigns(): Promise<RejectedCampaign[]> {
     created_at: string;
     recipient_email: string;
     sender_account: string;
-    kind: "gmail_api" | "mailer_daemon";
+    kind: "gmail_api" | "mailer_daemon" | "account_cooldown";
     reason: string;
     detected_at: string;
   }>(
@@ -320,7 +353,7 @@ export async function listCampaignRejections(campaignId: string): Promise<Reject
   const result = await pool.query<{
     recipient_email: string;
     sender_account: string;
-    kind: "gmail_api" | "mailer_daemon";
+    kind: "gmail_api" | "mailer_daemon" | "account_cooldown";
     reason: string;
     detected_at: string;
   }>(

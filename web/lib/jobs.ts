@@ -1,13 +1,14 @@
-import { createGmailService, listAccounts, sendWithService } from "./gmail";
+import { createGmailService, sendWithService } from "./gmail";
 import { RecipientRow, resolveTemplate } from "./template";
 import { appendAudit } from "./store";
 import {
   isAccountCooldownError,
+  getAccountCooldowns,
+  recordAccountCooldownRejections,
   recordCampaignDelivery,
   recordRejection,
   setAccountCooldown,
 } from "./rejections-db";
-import { startRejectionMonitor } from "./rejection-monitor";
 
 export interface JobLog {
   ts: number;
@@ -30,6 +31,7 @@ export interface JobState {
     string,
     { done: number; sent: number; failed: number }
   >;
+  cooldownAccounts: Record<string, { cooldownUntil: number; reason: string }>;
   logs: JobLog[];
 }
 
@@ -89,6 +91,7 @@ export function createJob(
     startedAt: Date.now(),
     finishedAt: null,
     perAccount,
+    cooldownAccounts: {},
     logs: [],
   });
   cleanupOldJobs();
@@ -126,6 +129,49 @@ export async function runJob(
     recipients.filter((_, idx) => idx % n === i),
   );
 
+  const stopAccountForCooldown = async (
+    account: string,
+    chunk: RecipientRow[],
+    startIndex: number,
+    reason: string,
+    cooldownUntil = Date.now() + 24 * 60 * 60 * 1000,
+  ) => {
+    const remaining = chunk.slice(startIndex).map((recipient) => ({
+      email: recipient.email,
+      subject: resolveTemplate(
+        subjects[Math.floor(Math.random() * subjects.length)],
+        recipient,
+      ),
+    }));
+    const job = jobs.get(jobId);
+    if (job) {
+      job.cooldownAccounts[account] = { cooldownUntil, reason };
+    }
+    if (remaining.length > 0) {
+      try {
+        await recordAccountCooldownRejections({
+          campaignId: jobId,
+          senderAccount: account,
+          recipients: remaining,
+          reason: `Sender account cooldown: ${reason}`,
+        });
+      } catch (dbError) {
+        console.error("Unable to save cooldown rejections:", dbError);
+      }
+      if (job) {
+        job.failed += remaining.length;
+        job.perAccount[account].failed += remaining.length;
+        job.perAccount[account].done += remaining.length;
+      }
+    }
+    pushLog(jobId, {
+      ts: Date.now(),
+      account,
+      message: `Account entered a 24-hour cooldown. ${remaining.length} remaining recipient(s) saved as rejected.`,
+      kind: "info",
+    });
+  };
+
   const workers = accounts.map(async (account, i) => {
     const chunk = chunks[i];
     if (chunk.length === 0) return;
@@ -151,6 +197,21 @@ export async function runJob(
       const wait = settings.rateLimitMs - (Date.now() - lastSentAt);
       if (wait > 0) await sleep(wait);
       lastSentAt = Date.now();
+      try {
+        const cooldown = (await getAccountCooldowns([account]))[account];
+        if (cooldown) {
+          await stopAccountForCooldown(
+            account,
+            chunk,
+            j,
+            cooldown.reason,
+            Date.parse(cooldown.cooldownUntil),
+          );
+          break;
+        }
+      } catch (dbError) {
+        console.error("Unable to check account cooldown:", dbError);
+      }
       const subject = subjects[Math.floor(Math.random() * subjects.length)];
       const resolvedSubject = resolveTemplate(subject, recipient);
       const resolvedHtml = resolveTemplate(html, recipient);
@@ -240,22 +301,19 @@ export async function runJob(
           kind: "fail",
         });
         if (isAccountCooldownError(failureReason)) {
+          const cooldownUntil = Date.now() + 24 * 60 * 60 * 1000;
           try {
             await setAccountCooldown(account, failureReason);
           } catch (dbError) {
             console.error("Unable to set account cooldown:", dbError);
           }
-          const remaining = chunk.length - j - 1;
-          if (job) {
-            job.skipped += remaining;
-            job.perAccount[account].done += remaining;
-          }
-          pushLog(jobId, {
-            ts: Date.now(),
+          await stopAccountForCooldown(
             account,
-            message: "Account entered a 24-hour cooldown after a Gmail rejection.",
-            kind: "info",
-          });
+            chunk,
+            j + 1,
+            failureReason,
+            cooldownUntil,
+          );
           break;
         }
       }
@@ -264,5 +322,4 @@ export async function runJob(
 
   await Promise.all(workers);
   finishJob(jobId);
-  startRejectionMonitor(jobId, listAccounts().map((account) => account.email));
 }

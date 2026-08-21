@@ -27,6 +27,7 @@ interface Job {
   startedAt: number;
   finishedAt: number | null;
   perAccount: Record<string, JobPerAccount>;
+  cooldownAccounts: Record<string, { cooldownUntil: number; reason: string }>;
   logs: JobLog[];
 }
 
@@ -47,7 +48,7 @@ interface CleanJob {
 interface RejectedRecipient {
   recipientEmail: string;
   senderAccount: string;
-  kind: "gmail_api" | "mailer_daemon";
+  kind: "gmail_api" | "mailer_daemon" | "account_cooldown";
   reason: string;
   detectedAt: string;
 }
@@ -453,6 +454,18 @@ export default function Home() {
           const d = await res.json();
           if (d.success) {
             setJob(d.job);
+            const cooldowns = d.job.cooldownAccounts as Job["cooldownAccounts"];
+            if (cooldowns && Object.keys(cooldowns).length > 0) {
+              const mapped = Object.fromEntries(Object.entries(cooldowns).map(([email, cooldown]) => [
+                email,
+                {
+                  cooldownUntil: new Date(cooldown.cooldownUntil).toISOString(),
+                  reason: cooldown.reason,
+                },
+              ]));
+              setAccountCooldowns((prev) => ({ ...prev, ...mapped }));
+              setSelected((prev) => new Set([...prev].filter((email) => !mapped[email])));
+            }
             if (d.job.status === "done") {
               stopPolling();
               setSending(false);
@@ -1026,7 +1039,13 @@ export default function Home() {
                       <span className="log-time">{new Date(rejection.detectedAt).toLocaleString()}</span>
                       <span className="log-account">[{rejection.senderAccount}]</span>
                       <span>{rejection.recipientEmail}</span>
-                      <span className="log-campaign">{rejection.kind === "mailer_daemon" ? "Mailer-Daemon" : "Gmail API"}</span>
+                      <span className="log-campaign">
+                        {rejection.kind === "mailer_daemon"
+                          ? "Mailer-Daemon"
+                          : rejection.kind === "account_cooldown"
+                            ? "Account cooldown"
+                            : "Gmail API"}
+                      </span>
                       <span className="fail ml-4">{rejection.reason}</span>
                     </div>
                   ))}
