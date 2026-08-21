@@ -457,3 +457,16 @@ export async function deleteCampaign(campaignId: string): Promise<boolean> {
   );
   return result.rowCount !== 0;
 }
+
+export async function deleteAllRejectedCampaigns(): Promise<number> {
+  const pool = await db();
+  const result = await pool.query(
+    `DELETE FROM campaigns
+     WHERE id IN (
+       SELECT DISTINCT campaign_id
+       FROM campaign_rejections
+     )
+     RETURNING id`,
+  );
+  return result.rowCount ?? 0;
+}

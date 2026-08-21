@@ -629,6 +629,20 @@ export default function Home() {
     }
   };
 
+  const deleteAllRejectedCampaigns = async () => {
+    const campaignCount = rejectedCampaigns.length;
+    const rejectionCount = rejectedCampaigns.reduce((sum, campaign) => sum + campaign.rejections.length, 0);
+    if (!window.confirm(`Delete all ${campaignCount} rejected campaign list(s) and ${rejectionCount} stored rejection record(s)? This only removes PostgreSQL tracking data.`)) return;
+    try {
+      const res = await fetch("/api/rejections?all=true", { method: "DELETE" });
+      const d = await parseApiJson(res) as { success: boolean; message?: string };
+      if (!d.success) throw new Error(d.message || "Unable to delete rejected campaigns.");
+      await loadRejections();
+    } catch (e: any) {
+      setError(e.message);
+    }
+  };
+
   const pollBounceScan = useCallback((jobId: string) => {
     stopBouncePolling();
     const poll = async () => {
@@ -1006,6 +1020,11 @@ export default function Home() {
               <button type="button" className="link-btn" onClick={scanBounces} disabled={scanningBounces || accounts.length === 0}>
                 {scanningBounces ? "Scanning..." : "Scan Mailer-Daemon"}
               </button>
+              {rejectedCampaigns.length > 0 && (
+                <button type="button" className="link-btn danger-link" onClick={() => void deleteAllRejectedCampaigns()}>
+                  Delete all lists
+                </button>
+              )}
             </div>
           </div>
           <p className="muted mt-6">

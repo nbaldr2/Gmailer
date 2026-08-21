@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   deleteCampaign,
+  deleteAllRejectedCampaigns,
   listCampaignRejections,
   listRejectedCampaigns,
 } from "@/lib/rejections-db";
@@ -12,7 +13,12 @@ function csvCell(value: string | null | undefined): string {
 
 export async function DELETE(request: Request) {
   try {
-    const campaignId = new URL(request.url).searchParams.get("campaignId");
+    const url = new URL(request.url);
+    if (url.searchParams.get("all") === "true") {
+      const deleted = await deleteAllRejectedCampaigns();
+      return NextResponse.json({ success: true, deleted });
+    }
+    const campaignId = url.searchParams.get("campaignId");
     if (!campaignId) {
       return NextResponse.json(
         { success: false, message: "Campaign ID is required" },
