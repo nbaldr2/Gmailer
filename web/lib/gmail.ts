@@ -202,7 +202,7 @@ export async function listMailerDaemonMessageIds(
   const listed = await gmail.users.messages.list({
     userId: "me",
     labelIds: ["INBOX"],
-    q: "from:mailer-daemon newer_than:1d",
+    q: "from:mailer-daemon@googlemail.com newer_than:1d",
     maxResults: Math.min(maxResults, 500),
   });
   return (listed.data.messages ?? []).flatMap((message) => message.id ? [message.id] : []);
