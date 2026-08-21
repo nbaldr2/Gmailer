@@ -398,6 +398,7 @@ export async function listRejectedCampaigns(): Promise<RejectedCampaign[]> {
             r.recipient_email, r.sender_account, r.kind, r.reason, r.detected_at
      FROM campaign_rejections r
      JOIN campaigns c ON c.id = r.campaign_id
+     WHERE c.id <> 'unmatched-mailer-daemon'
      ORDER BY c.created_at DESC, r.detected_at DESC`,
   );
   const campaigns = new Map<string, RejectedCampaign>();
