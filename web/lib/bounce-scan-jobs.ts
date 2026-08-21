@@ -52,6 +52,10 @@ function parseRecipients(raw: string): string[] {
 }
 
 function parseReason(raw: string): string {
+  const directLimit = raw.match(
+    /You have reached a limit for sending mail\.\s*Your message was not sent\./i,
+  );
+  if (directLimit) return directLimit[0];
   const match = raw.match(/The response was:\s*([\s\S]{1,1200})/i)
     ?? raw.match(/Diagnostic-Code:\s*[^;]+;\s*([\s\S]{1,1200})/i);
   const text = (match?.[1] ?? "Mailer-Daemon delivery failure")
