@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { resolveTemplate, RecipientRow, validateEmail } from "@/lib/template";
 
-type Tab = "compose" | "recipients" | "settings" | "logs" | "clean";
+type Tab = "compose" | "recipients" | "settings" | "logs" | "rejected" | "clean";
 
 interface JobPerAccount {
   done: number;
@@ -42,6 +42,33 @@ interface CleanJob {
   status: "running" | "done";
   target: "sent" | "trash";
   accounts: Record<string, CleanAccountProgress>;
+}
+
+interface RejectedRecipient {
+  recipientEmail: string;
+  senderAccount: string;
+  kind: "gmail_api" | "mailer_daemon";
+  reason: string;
+  detectedAt: string;
+}
+
+interface RejectedCampaign {
+  id: string;
+  name: string;
+  fromName: string | null;
+  createdAt: string;
+  rejections: RejectedRecipient[];
+}
+
+interface BounceScanJob {
+  id: string;
+  status: "running" | "done";
+  accounts: Record<string, {
+    examined: number;
+    imported: number;
+    unmatched: number;
+    error?: string;
+  }>;
 }
 
 interface AuditEntry {
@@ -161,8 +188,13 @@ export default function Home() {
   const [cleanResults, setCleanResults] = useState<
     Record<string, CleanAccountProgress> | null
   >(null);
+  const [rejectedCampaigns, setRejectedCampaigns] = useState<RejectedCampaign[]>([]);
+  const [loadingRejections, setLoadingRejections] = useState(false);
+  const [scanningBounces, setScanningBounces] = useState(false);
+  const [bounceScan, setBounceScan] = useState<BounceScanJob | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const cleanPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const bouncePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const copyVar = useCallback(async (v: string) => {
     try {
@@ -188,6 +220,13 @@ export default function Home() {
     }
   }, []);
 
+  const stopBouncePolling = useCallback(() => {
+    if (bouncePollRef.current) {
+      clearInterval(bouncePollRef.current);
+      bouncePollRef.current = null;
+    }
+  }, []);
+
   useEffect(() => {
     fetch("/api/accounts")
       .then((r) => r.json())
@@ -195,8 +234,9 @@ export default function Home() {
     return () => {
       stopPolling();
       stopCleanPolling();
+      stopBouncePolling();
     };
-  }, [stopPolling, stopCleanPolling]);
+  }, [stopPolling, stopCleanPolling, stopBouncePolling]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -472,6 +512,80 @@ export default function Home() {
     } catch {}
   };
 
+  const loadRejections = useCallback(async () => {
+    setLoadingRejections(true);
+    try {
+      const res = await fetch("/api/rejections");
+      const d = await parseApiJson(res) as {
+        success: boolean;
+        message?: string;
+        campaigns?: RejectedCampaign[];
+      };
+      if (!d.success) throw new Error(d.message || "Unable to load rejected campaigns.");
+      setRejectedCampaigns(d.campaigns ?? []);
+    } catch (e: any) {
+      setError(e.message);
+    }
+    setLoadingRejections(false);
+  }, []);
+
+  const pollBounceScan = useCallback((jobId: string) => {
+    stopBouncePolling();
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/rejections/scan?id=${encodeURIComponent(jobId)}`);
+        const d = await parseApiJson(res) as {
+          success: boolean;
+          message?: string;
+          job?: BounceScanJob;
+        };
+        if (!d.success || !d.job) throw new Error(d.message || "Unable to read scan progress.");
+        setBounceScan(d.job);
+        if (d.job.status === "done") {
+          setScanningBounces(false);
+          stopBouncePolling();
+          void loadRejections();
+        }
+      } catch (e: any) {
+        setError(e.message);
+        setScanningBounces(false);
+        stopBouncePolling();
+      }
+    };
+    void poll();
+    bouncePollRef.current = setInterval(() => void poll(), 1000);
+  }, [loadRejections, stopBouncePolling]);
+
+  const scanBounces = async () => {
+    const scanAccounts = selected.size > 0 ? [...selected] : accounts;
+    if (scanAccounts.length === 0) {
+      setError("No accounts connected to scan.");
+      return;
+    }
+    if (!window.confirm(`Scan ${scanAccounts.length} account(s) for Mailer-Daemon rejection notices?`)) return;
+    setError("");
+    setScanningBounces(true);
+    setBounceScan(null);
+    try {
+      const res = await fetch("/api/rejections/scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accounts: scanAccounts }),
+      });
+      const d = await parseApiJson(res) as {
+        success: boolean;
+        message?: string;
+        job?: BounceScanJob;
+      };
+      if (!d.success || !d.job) throw new Error(d.message || "Unable to start bounce scan.");
+      setBounceScan(d.job);
+      pollBounceScan(d.job.id);
+    } catch (e: any) {
+      setError(e.message);
+      setScanningBounces(false);
+    }
+  };
+
   const totalDone = job
     ? Object.values(job.perAccount).reduce((s, a) => s + a.done, 0)
     : 0;
@@ -505,13 +619,14 @@ export default function Home() {
       </header>
 
       <nav className="tabs" aria-label="Mailer sections">
-        {(["compose", "recipients", "settings", "logs", "clean"] as Tab[]).map((t) => (
+        {(["compose", "recipients", "settings", "logs", "rejected", "clean"] as Tab[]).map((t) => (
           <button
             key={t}
             className={`tab-btn ${tab === t ? "active" : ""}`}
             onClick={() => {
               setTab(t);
               if (t === "settings") loadSuppression();
+              if (t === "rejected") void loadRejections();
               if (t === "logs") loadAudit();
             }}
           >
@@ -758,6 +873,80 @@ export default function Home() {
                 <span className="log-campaign">{entry.campaign}</span>
                 {entry.error && <span className="fail ml-4">{entry.error}</span>}
               </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {tab === "rejected" && (
+        <section className="panel">
+          <div className="field-head">
+            <div>
+              <p className="section-eyebrow">Delivery failures</p>
+              <h2>Rejected campaigns</h2>
+            </div>
+            <div className="row-gap">
+              <button type="button" className="link-btn" onClick={() => void loadRejections()} disabled={loadingRejections}>
+                {loadingRejections ? "Loading..." : "Refresh"}
+              </button>
+              <button type="button" className="link-btn" onClick={scanBounces} disabled={scanningBounces || accounts.length === 0}>
+                {scanningBounces ? "Scanning..." : "Scan Mailer-Daemon"}
+              </button>
+            </div>
+          </div>
+          <p className="muted mt-6">
+            API rejections are saved while campaigns send. Scan Mailer-Daemon notices to import later Gmail delivery failures. The scan uses selected accounts, or all connected accounts when none are selected.
+          </p>
+          {scanningBounces && <p className="muted mt-10">Scanning sender mailboxes in the background...</p>}
+          {bounceScan && (
+            <div className="account-progress mt-10">
+              {Object.entries(bounceScan.accounts).map(([email, progress]) => (
+                <div key={email} className="acct-chip">
+                  <span className="acct-name">{email}</span>
+                  {progress.error ? (
+                    <span className="fail">{progress.error}</span>
+                  ) : (
+                    <>
+                      <span className="muted">{progress.examined} notices checked</span>
+                      <span className="ok">{progress.imported} matched</span>
+                      <span className="fail">{progress.unmatched} unmatched</span>
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          {!loadingRejections && rejectedCampaigns.length === 0 && (
+            <p className="muted mt-14">No rejected recipients recorded yet.</p>
+          )}
+          <div className="rejection-list mt-10">
+            {rejectedCampaigns.map((campaign) => (
+              <article key={campaign.id} className="rejection-campaign">
+                <div className="field-head">
+                  <div>
+                    <h3>{campaign.name}</h3>
+                    <p className="muted">Campaign ID: <code>{campaign.id}</code></p>
+                    <p className="muted">From name: {campaign.fromName || "(not set)"}</p>
+                  </div>
+                  <a
+                    className="link-btn"
+                    href={`/api/rejections?format=csv&campaignId=${encodeURIComponent(campaign.id)}`}
+                  >
+                    Download CSV
+                  </a>
+                </div>
+                <div className="logs mt-6">
+                  {campaign.rejections.map((rejection, index) => (
+                    <div key={`${rejection.recipientEmail}-${rejection.detectedAt}-${index}`} className="log fail">
+                      <span className="log-time">{new Date(rejection.detectedAt).toLocaleString()}</span>
+                      <span className="log-account">[{rejection.senderAccount}]</span>
+                      <span>{rejection.recipientEmail}</span>
+                      <span className="log-campaign">{rejection.kind === "mailer_daemon" ? "Mailer-Daemon" : "Gmail API"}</span>
+                      <span className="fail ml-4">{rejection.reason}</span>
+                    </div>
+                  ))}
+                </div>
+              </article>
             ))}
           </div>
         </section>

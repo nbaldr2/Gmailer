@@ -832,6 +832,25 @@ details summary {
   border-bottom: 1px solid rgba(215, 227, 208, 0.62);
 }
 
+.rejection-list {
+  display: grid;
+  gap: 12px;
+}
+
+.rejection-campaign {
+  padding: 14px;
+  background: rgba(255, 255, 251, 0.72);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+
+.rejection-campaign h3 {
+  margin: 0;
+  color: var(--green-dark);
+  font-family: ui-serif, Georgia, Cambria, serif;
+  font-size: 1.12rem;
+}
+
 .log:last-child {
   border-bottom: none;
 }
@@ -1155,6 +1174,15 @@ input[type="number"]:focus,
 
 .acct-chip {
   background: rgba(18, 34, 23, 0.76);
+}
+
+.rejection-campaign {
+  background: rgba(18, 34, 23, 0.76);
+  border-color: #3a5a40;
+}
+
+.rejection-campaign h3 {
+  color: var(--green-bright);
 }
 
 .logs {

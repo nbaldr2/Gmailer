@@ -1,6 +1,7 @@
 import { createGmailService, sendWithService } from "./gmail";
 import { RecipientRow, resolveTemplate } from "./template";
 import { appendAudit } from "./store";
+import { recordCampaignDelivery, recordRejection } from "./rejections-db";
 
 export interface JobLog {
   ts: number;
@@ -171,6 +172,19 @@ export async function runJob(
           messageId: res.id as string,
           threadId: res.threadId as string,
         });
+        try {
+          await recordCampaignDelivery({
+            campaignId: jobId,
+            recipientEmail: recipient.email,
+            senderAccount: account,
+            subject: resolvedSubject,
+            status: "sent",
+            gmailMessageId: res.id as string,
+            gmailThreadId: res.threadId as string,
+          });
+        } catch (dbError) {
+          console.error("Unable to record sent delivery:", dbError);
+        }
         pushLog(jobId, {
           ts: Date.now(),
           account,
@@ -192,6 +206,26 @@ export async function runJob(
           status: "failed",
           error: e.message || String(e),
         });
+        try {
+          const deliveryId = await recordCampaignDelivery({
+            campaignId: jobId,
+            recipientEmail: recipient.email,
+            senderAccount: account,
+            subject: resolvedSubject,
+            status: "rejected",
+            error: e.message || String(e),
+          });
+          await recordRejection({
+            campaignId: jobId,
+            deliveryId,
+            recipientEmail: recipient.email,
+            senderAccount: account,
+            kind: "gmail_api",
+            reason: e.message || String(e),
+          });
+        } catch (dbError) {
+          console.error("Unable to record rejected delivery:", dbError);
+        }
         pushLog(jobId, {
           ts: Date.now(),
           account,

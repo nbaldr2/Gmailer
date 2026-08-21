@@ -187,3 +187,40 @@ export async function deleteMessage(email: string, messageId: string): Promise<v
     id: messageId,
   });
 }
+
+export interface MailerDaemonMessage {
+  id: string;
+  receivedAt: number;
+  raw: string;
+}
+
+export async function listMailerDaemonMessages(
+  email: string,
+  maxResults = 100,
+): Promise<MailerDaemonMessage[]> {
+  const gmail = createGmailService(email);
+  const listed = await gmail.users.messages.list({
+    userId: "me",
+    q: "in:anywhere from:mailer-daemon",
+    maxResults: Math.min(maxResults, 500),
+  });
+  const messages = listed.data.messages ?? [];
+  const result: MailerDaemonMessage[] = [];
+  for (const message of messages) {
+    if (!message.id) continue;
+    const full = await gmail.users.messages.get({
+      userId: "me",
+      id: message.id,
+      format: "raw",
+    });
+    const raw = full.data.raw
+      ? Buffer.from(full.data.raw, "base64url").toString("utf8")
+      : "";
+    result.push({
+      id: message.id,
+      receivedAt: Number(full.data.internalDate ?? Date.now()),
+      raw,
+    });
+  }
+  return result;
+}
