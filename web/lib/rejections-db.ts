@@ -321,18 +321,24 @@ export async function recordAccountLevelBounce(input: {
   reason: string;
 }): Promise<boolean> {
   const pool = await db();
-  let campaignId = input.campaignId;
-  if (!campaignId) {
-    const latest = await pool.query<{ campaign_id: string }>(
-      `SELECT campaign_id
-       FROM campaign_deliveries
-       WHERE sender_account = $1
-       ORDER BY sent_at DESC
-       LIMIT 1`,
-      [input.senderAccount],
-    );
-    campaignId = latest.rows[0]?.campaign_id;
-  }
+  const latest = await pool.query<{
+    id: string;
+    campaign_id: string;
+    recipient_email: string;
+  }>(
+    `SELECT id, campaign_id, recipient_email
+     FROM campaign_deliveries
+     WHERE sender_account = $1
+       AND status = 'sent'
+       ${input.campaignId ? "AND campaign_id = $2" : ""}
+     ORDER BY sent_at DESC
+     LIMIT 1`,
+    input.campaignId
+      ? [input.senderAccount, input.campaignId]
+      : [input.senderAccount],
+  );
+  const delivery = latest.rows[0];
+  let campaignId = delivery?.campaign_id ?? input.campaignId;
   if (!campaignId) {
     campaignId = "unmatched-mailer-daemon";
     await pool.query(
@@ -342,21 +348,30 @@ export async function recordAccountLevelBounce(input: {
       [campaignId, "Unmatched Mailer-Daemon notices"],
     );
   }
-  const recipientEmail = "Recipient not specified by Gmail";
+  const recipientEmail = delivery?.recipient_email ?? "Recipient not specified by Gmail";
+  if (delivery) {
+    await pool.query(
+      `UPDATE campaign_deliveries
+       SET status = 'bounced', error = $2
+       WHERE id = $1`,
+      [delivery.id, input.reason],
+    );
+  }
   const result = await pool.query(
     `INSERT INTO campaign_rejections
-       (campaign_id, recipient_email, sender_account, kind, reason, bounce_message_id)
-     SELECT $1, $2, $3, 'mailer_daemon', $4, $5
+       (campaign_id, delivery_id, recipient_email, sender_account, kind, reason, bounce_message_id)
+     SELECT $1, $2, $3, $4, 'mailer_daemon', $5, $6
      WHERE NOT EXISTS (
        SELECT 1
        FROM campaign_rejections
-       WHERE sender_account = $3
-         AND bounce_message_id = $5
-         AND recipient_email = $2
+       WHERE sender_account = $4
+         AND bounce_message_id = $6
+         AND recipient_email = $3
      )
      RETURNING id`,
     [
       campaignId,
+      delivery?.id ?? null,
       recipientEmail,
       input.senderAccount,
       input.reason,
