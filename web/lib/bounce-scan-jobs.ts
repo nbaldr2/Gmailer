@@ -1,4 +1,7 @@
-import { listMailerDaemonMessages } from "./gmail";
+import {
+  getMailerDaemonMessage,
+  listMailerDaemonMessageIds,
+} from "./gmail";
 import {
   claimBounceForProcessing,
   recordMailerDaemonBounce,
@@ -66,17 +69,19 @@ export function getBounceScanJob(id: string): BounceScanJob | undefined {
   return scanJobs.get(id);
 }
 
-export async function runBounceScanJob(jobId: string, accounts: string[]) {
-  const job = scanJobs.get(jobId);
-  if (!job) return;
-
-  for (const account of accounts) {
-    const progress = job.accounts[account];
+export async function scanBounceAccounts(
+  accounts: string[],
+  progressByAccount: Record<string, BounceScanAccountProgress>,
+) {
+  await Promise.all(accounts.map(async (account) => {
+    const progress = progressByAccount[account];
+    if (!progress) return;
     try {
-      const messages = await listMailerDaemonMessages(account);
-      for (const message of messages) {
+      const messageIds = await listMailerDaemonMessageIds(account);
+      for (const messageId of messageIds) {
         progress.examined++;
-        if (!await claimBounceForProcessing(account, message.id)) continue;
+        if (!await claimBounceForProcessing(account, messageId)) continue;
+        const message = await getMailerDaemonMessage(account, messageId);
         const recipients = parseRecipients(message.raw);
         if (recipients.length === 0) {
           progress.unmatched++;
@@ -94,7 +99,14 @@ export async function runBounceScanJob(jobId: string, accounts: string[]) {
     } catch (e: any) {
       progress.error = e.message || String(e);
     }
-  }
+  }));
+}
+
+export async function runBounceScanJob(jobId: string, accounts: string[]) {
+  const job = scanJobs.get(jobId);
+  if (!job) return;
+
+  await scanBounceAccounts(accounts, job.accounts);
 
   job.status = "done";
   job.finishedAt = Date.now();

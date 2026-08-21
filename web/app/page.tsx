@@ -71,6 +71,21 @@ interface BounceScanJob {
   }>;
 }
 
+interface RejectionMonitor {
+  campaignId: string;
+  status: "running" | "done";
+  accounts: Record<string, {
+    examined: number;
+    imported: number;
+    unmatched: number;
+    error?: string;
+  }>;
+  startedAt: number;
+  endsAt: number;
+  scans: number;
+  lastScanAt?: number;
+}
+
 interface AuditEntry {
   ts: string;
   campaign: string;
@@ -192,6 +207,7 @@ export default function Home() {
   const [loadingRejections, setLoadingRejections] = useState(false);
   const [scanningBounces, setScanningBounces] = useState(false);
   const [bounceScan, setBounceScan] = useState<BounceScanJob | null>(null);
+  const [rejectionMonitors, setRejectionMonitors] = useState<RejectionMonitor[]>([]);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const cleanPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const bouncePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -512,6 +528,17 @@ export default function Home() {
     } catch {}
   };
 
+  const loadRejectionMonitors = useCallback(async () => {
+    try {
+      const res = await fetch("/api/rejections/monitor");
+      const d = await parseApiJson(res) as {
+        success: boolean;
+        monitors?: RejectionMonitor[];
+      };
+      if (d.success) setRejectionMonitors(d.monitors ?? []);
+    } catch {}
+  }, []);
+
   const loadRejections = useCallback(async () => {
     setLoadingRejections(true);
     try {
@@ -526,8 +553,9 @@ export default function Home() {
     } catch (e: any) {
       setError(e.message);
     }
+    void loadRejectionMonitors();
     setLoadingRejections(false);
-  }, []);
+  }, [loadRejectionMonitors]);
 
   const pollBounceScan = useCallback((jobId: string) => {
     stopBouncePolling();
@@ -557,12 +585,12 @@ export default function Home() {
   }, [loadRejections, stopBouncePolling]);
 
   const scanBounces = async () => {
-    const scanAccounts = selected.size > 0 ? [...selected] : accounts;
+    const scanAccounts = accounts;
     if (scanAccounts.length === 0) {
       setError("No accounts connected to scan.");
       return;
     }
-    if (!window.confirm(`Scan ${scanAccounts.length} account(s) for Mailer-Daemon rejection notices?`)) return;
+    if (!window.confirm(`Scan the Inbox of all ${scanAccounts.length} connected account(s) for Mailer-Daemon rejection notices?`)) return;
     setError("");
     setScanningBounces(true);
     setBounceScan(null);
@@ -585,6 +613,13 @@ export default function Home() {
       setScanningBounces(false);
     }
   };
+
+  useEffect(() => {
+    if (tab !== "rejected") return;
+    void loadRejections();
+    const interval = setInterval(() => void loadRejections(), 10000);
+    return () => clearInterval(interval);
+  }, [tab, loadRejections]);
 
   const totalDone = job
     ? Object.values(job.perAccount).reduce((s, a) => s + a.done, 0)
@@ -895,8 +930,13 @@ export default function Home() {
             </div>
           </div>
           <p className="muted mt-6">
-            API rejections are saved while campaigns send. Scan Mailer-Daemon notices to import later Gmail delivery failures. The scan uses selected accounts, or all connected accounts when none are selected.
+            API rejections are saved while campaigns send. Mailer-Daemon scans check the Inbox of all connected accounts in parallel.
           </p>
+          {rejectionMonitors.filter((monitor) => monitor.status === "running").map((monitor) => (
+            <p key={monitor.campaignId} className="ok mt-6">
+              Monitoring campaign <code>{monitor.campaignId}</code>: {monitor.scans} Inbox scan{monitor.scans === 1 ? "" : "s"} complete, ending at {new Date(monitor.endsAt).toLocaleTimeString()}.
+            </p>
+          ))}
           {scanningBounces && <p className="muted mt-10">Scanning sender mailboxes in the background...</p>}
           {bounceScan && (
             <div className="account-progress mt-10">

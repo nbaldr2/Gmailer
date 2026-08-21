@@ -1,7 +1,8 @@
-import { createGmailService, sendWithService } from "./gmail";
+import { createGmailService, listAccounts, sendWithService } from "./gmail";
 import { RecipientRow, resolveTemplate } from "./template";
 import { appendAudit } from "./store";
 import { recordCampaignDelivery, recordRejection } from "./rejections-db";
+import { startRejectionMonitor } from "./rejection-monitor";
 
 export interface JobLog {
   ts: number;
@@ -238,4 +239,5 @@ export async function runJob(
 
   await Promise.all(workers);
   finishJob(jobId);
+  startRejectionMonitor(jobId, listAccounts().map((account) => account.email));
 }
