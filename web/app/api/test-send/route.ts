@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { sendOne } from "@/lib/gmail";
-import { getAccountCooldowns } from "@/lib/rejections-db";
+import { clearAccountCooldown } from "@/lib/rejections-db";
 
 export async function POST(request: Request) {
   try {
@@ -17,18 +17,12 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
-    const cooldown = (await getAccountCooldowns([account]))[account];
-    if (cooldown) {
-      return NextResponse.json(
-        {
-          success: false,
-          message: `Account is in cooldown until ${cooldown.cooldownUntil}.`,
-        },
-        { status: 429 },
-      );
-    }
-
     const res = await sendOne(account, to, subject, fromName, html);
+    try {
+      await clearAccountCooldown(account);
+    } catch (e) {
+      console.error("Unable to clear account cooldown after test send:", e);
+    }
     return NextResponse.json({
       success: true,
       messageId: res.id,

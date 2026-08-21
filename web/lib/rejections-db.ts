@@ -161,6 +161,14 @@ export async function getAccountCooldowns(
   ]));
 }
 
+export async function clearAccountCooldown(accountEmail: string): Promise<void> {
+  const pool = await db();
+  await pool.query(
+    "DELETE FROM account_cooldowns WHERE account_email = $1",
+    [accountEmail],
+  );
+}
+
 async function db(): Promise<Pool> {
   await ensureSchema();
   return getPool();

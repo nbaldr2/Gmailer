@@ -266,7 +266,6 @@ export default function Home() {
           : []),
       );
       setAccountCooldowns(cooldowns);
-      setSelected((prev) => new Set([...prev].filter((email) => !cooldowns[email])));
     } catch (e) {
       console.error("Unable to load accounts:", e);
     }
@@ -295,19 +294,17 @@ export default function Home() {
   }, []);
 
   const toggleAccount = (email: string) => {
-    if (accountCooldowns[email]) return;
     setSelected((prev) => {
       const next = new Set(prev);
       next.has(email) ? next.delete(email) : next.add(email);
       return next;
     });
   };
-  const availableAccounts = accounts.filter((email) => !accountCooldowns[email]);
   const toggleAll = () =>
     setSelected((prev) =>
-      availableAccounts.length > 0 && availableAccounts.every((email) => prev.has(email))
+      accounts.length > 0 && accounts.every((email) => prev.has(email))
         ? new Set()
-        : new Set(availableAccounts),
+        : new Set(accounts),
     );
 
   const removeAccount = async (email: string) => {
@@ -539,7 +536,12 @@ export default function Home() {
         }),
       });
       const d = await res.json();
-      setTestStatus(d.success ? `Sent (id: ${d.messageId})` : `Error: ${d.message}`);
+      if (d.success) {
+        setTestStatus(`Sent (id: ${d.messageId}). Account cooldown cleared.`);
+        void loadAccounts();
+      } else {
+        setTestStatus(`Error: ${d.message}`);
+      }
     } catch (e: any) {
       setTestStatus(`Error: ${e.message}`);
     }
@@ -730,14 +732,14 @@ export default function Home() {
             <div className="account-list">
               <div className="account-row">
                 <label className="account-label">
-                  <input type="checkbox" checked={availableAccounts.length > 0 && availableAccounts.every((email) => selected.has(email))} onChange={toggleAll} />
-                  <span className="account-name">All available accounts</span>
+                  <input type="checkbox" checked={accounts.length > 0 && accounts.every((email) => selected.has(email))} onChange={toggleAll} />
+                  <span className="account-name">All accounts</span>
                 </label>
               </div>
               {accounts.map((email) => (
                 <div key={email} className="account-row">
                   <label className="account-label">
-                    <input type="checkbox" checked={selected.has(email)} onChange={() => toggleAccount(email)} disabled={Boolean(accountCooldowns[email])} />
+                    <input type="checkbox" checked={selected.has(email)} onChange={() => toggleAccount(email)} />
                     <span
                       className={`account-status-dot ${accountCooldowns[email] ? "cooldown" : ""}`}
                       title={accountCooldowns[email]
@@ -817,6 +819,7 @@ export default function Home() {
               </select>
               <input type="text" value={testTo} onChange={(e) => setTestTo(e.target.value)} placeholder="recipient@example.com" className="mt-6" />
               <button type="button" className="link-btn full mt-6" onClick={testSend}>Send test note</button>
+              <p className="muted mt-4">A successful test send clears the selected account&apos;s 24-hour cooldown.</p>
               {testStatus && <p className="muted mt-4">{testStatus}</p>}
             </div>
           </section>
@@ -1064,14 +1067,14 @@ export default function Home() {
             <div className="account-list">
               <div className="account-row">
                 <label className="account-label">
-                  <input type="checkbox" checked={availableAccounts.length > 0 && availableAccounts.every((email) => selected.has(email))} onChange={toggleAll} />
-                  <span className="account-name">All available accounts</span>
+                  <input type="checkbox" checked={accounts.length > 0 && accounts.every((email) => selected.has(email))} onChange={toggleAll} />
+                  <span className="account-name">All accounts</span>
                 </label>
               </div>
               {accounts.map((email) => (
                 <div key={email} className="account-row">
                   <label className="account-label">
-                    <input type="checkbox" checked={selected.has(email)} onChange={() => toggleAccount(email)} disabled={Boolean(accountCooldowns[email])} />
+                    <input type="checkbox" checked={selected.has(email)} onChange={() => toggleAccount(email)} />
                     <span
                       className={`account-status-dot ${accountCooldowns[email] ? "cooldown" : ""}`}
                       title={accountCooldowns[email]
