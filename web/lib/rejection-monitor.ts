@@ -38,7 +38,10 @@ export function startRejectionMonitor(campaignId: string, accounts: string[]) {
 
 async function runMonitor(monitor: RejectionMonitor, accounts: string[]) {
   while (Date.now() < monitor.endsAt) {
-    await scanBounceAccounts(accounts, monitor.accounts);
+    await scanBounceAccounts(accounts, monitor.accounts, {
+      campaignId: monitor.campaignId,
+      notBefore: monitor.startedAt,
+    });
     monitor.scans++;
     monitor.lastScanAt = Date.now();
     const remaining = monitor.endsAt - Date.now();

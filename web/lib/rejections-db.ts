@@ -305,6 +305,50 @@ export async function recordMailerDaemonBounce(
   return true;
 }
 
+export async function recordAccountLevelBounce(input: {
+  campaignId?: string;
+  senderAccount: string;
+  bounceMessageId: string;
+  reason: string;
+}): Promise<boolean> {
+  const pool = await db();
+  let campaignId = input.campaignId;
+  if (!campaignId) {
+    const latest = await pool.query<{ campaign_id: string }>(
+      `SELECT campaign_id
+       FROM campaign_deliveries
+       WHERE sender_account = $1
+       ORDER BY sent_at DESC
+       LIMIT 1`,
+      [input.senderAccount],
+    );
+    campaignId = latest.rows[0]?.campaign_id;
+  }
+  if (!campaignId) return false;
+  const recipientEmail = "Recipient not specified by Gmail";
+  const result = await pool.query(
+    `INSERT INTO campaign_rejections
+       (campaign_id, recipient_email, sender_account, kind, reason, bounce_message_id)
+     SELECT $1, $2, $3, 'mailer_daemon', $4, $5
+     WHERE NOT EXISTS (
+       SELECT 1
+       FROM campaign_rejections
+       WHERE sender_account = $3
+         AND bounce_message_id = $5
+         AND recipient_email = $2
+     )
+     RETURNING id`,
+    [
+      campaignId,
+      recipientEmail,
+      input.senderAccount,
+      input.reason,
+      input.bounceMessageId,
+    ],
+  );
+  return result.rowCount !== 0;
+}
+
 export async function listRejectedCampaigns(): Promise<RejectedCampaign[]> {
   const pool = await db();
   const result = await pool.query<{

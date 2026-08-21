@@ -5,6 +5,7 @@ import {
 import {
   claimBounceForProcessing,
   isAccountCooldownError,
+  recordAccountLevelBounce,
   recordMailerDaemonBounce,
   setAccountCooldown,
 } from "./rejections-db";
@@ -22,6 +23,11 @@ export interface BounceScanJob {
   accounts: Record<string, BounceScanAccountProgress>;
   startedAt: number;
   finishedAt?: number;
+}
+
+export interface BounceScanOptions {
+  campaignId?: string;
+  notBefore?: number;
 }
 
 const scanJobs = new Map<string, BounceScanJob>();
@@ -74,6 +80,7 @@ export function getBounceScanJob(id: string): BounceScanJob | undefined {
 export async function scanBounceAccounts(
   accounts: string[],
   progressByAccount: Record<string, BounceScanAccountProgress>,
+  options: BounceScanOptions = {},
 ) {
   await Promise.all(accounts.map(async (account) => {
     const progress = progressByAccount[account];
@@ -82,20 +89,35 @@ export async function scanBounceAccounts(
       const messageIds = await listMailerDaemonMessageIds(account);
       for (const messageId of messageIds) {
         progress.examined++;
-        if (!await claimBounceForProcessing(account, messageId)) continue;
         const message = await getMailerDaemonMessage(account, messageId);
+        if (options.notBefore && message.receivedAt < options.notBefore) continue;
         const recipients = parseRecipients(message.raw);
-        if (recipients.length === 0) {
-          progress.unmatched++;
-          continue;
-        }
         const reason = parseReason(message.raw);
+        const newlyClaimed = await claimBounceForProcessing(account, messageId);
         if (isAccountCooldownError(reason)) {
           try {
             await setAccountCooldown(account, reason);
           } catch (dbError) {
             console.error("Unable to set account cooldown:", dbError);
           }
+          if (recipients.length === 0) {
+            if (await recordAccountLevelBounce({
+              campaignId: options.campaignId,
+              senderAccount: account,
+              bounceMessageId: message.id,
+              reason,
+            })) {
+              progress.imported++;
+            } else {
+              progress.unmatched++;
+            }
+            continue;
+          }
+        }
+        if (!newlyClaimed) continue;
+        if (recipients.length === 0) {
+          progress.unmatched++;
+          continue;
         }
         for (const recipient of recipients) {
           if (await recordMailerDaemonBounce(account, message.id, recipient, reason)) {
