@@ -102,19 +102,17 @@ export async function scanBounceAccounts(
               console.error("Unable to set account cooldown:", dbError);
             }
           }
-          if (recipients.length === 0) {
-            if (await recordAccountLevelBounce({
-              campaignId: options.campaignId,
-              senderAccount: account,
-              bounceMessageId: message.id,
-              reason,
-            })) {
-              progress.imported++;
-            } else {
-              progress.unmatched++;
-            }
-            continue;
+          if (await recordAccountLevelBounce({
+            campaignId: options.campaignId,
+            senderAccount: account,
+            bounceMessageId: message.id,
+            reason,
+          })) {
+            progress.imported++;
+          } else {
+            progress.unmatched++;
           }
+          continue;
         }
         if (!newlyClaimed) continue;
         if (recipients.length === 0) {
