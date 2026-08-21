@@ -40,6 +40,7 @@ interface CleanAccountProgress {
 interface CleanJob {
   id: string;
   status: "running" | "done";
+  target: "sent" | "trash";
   accounts: Record<string, CleanAccountProgress>;
 }
 
@@ -156,6 +157,7 @@ export default function Home() {
   const [invalidEmails, setInvalidEmails] = useState<string[]>([]);
   const [copiedVar, setCopiedVar] = useState<string>("");
   const [cleaning, setCleaning] = useState(false);
+  const [cleanTarget, setCleanTarget] = useState<"sent" | "trash" | null>(null);
   const [cleanResults, setCleanResults] = useState<
     Record<string, CleanAccountProgress> | null
   >(null);
@@ -246,6 +248,7 @@ export default function Home() {
         const res = await fetch(`/api/clean-sent?id=${encodeURIComponent(jobId)}`);
         const d = await parseApiJson(res) as { success: boolean; message?: string; job?: CleanJob };
         if (!d.success || !d.job) throw new Error(d.message || "Unable to read cleanup progress.");
+        setCleanTarget(d.job.target);
         setCleanResults(d.job.accounts);
         if (d.job.status === "done") {
           setCleaning(false);
@@ -261,27 +264,32 @@ export default function Home() {
     cleanPollRef.current = setInterval(() => void poll(), 1000);
   }, [stopCleanPolling]);
 
-  const cleanSent = async () => {
+  const cleanFolder = async (target: "sent" | "trash") => {
     const accts = [...selected];
     if (accts.length === 0) { setError("Select at least one account."); return; }
+    const action = target === "trash"
+      ? "PERMANENTLY delete every message in Trash"
+      : "move every sent message to Trash";
     if (
       !window.confirm(
-        `Move ALL sent messages to trash for:\n${accts.join("\n")}\n\nThis cannot be undone. Continue?`,
+        `${action} for:\n${accts.join("\n")}\n\n${target === "trash" ? "This cannot be undone." : "Messages remain recoverable in Trash for 30 days."} Continue?`,
       )
     )
       return;
     setError("");
     setCleaning(true);
+    setCleanTarget(target);
     setCleanResults(null);
     try {
       const res = await fetch("/api/clean-sent", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ accounts: accts }),
+        body: JSON.stringify({ accounts: accts, target }),
       });
       const d = await parseApiJson(res) as { success: boolean; message?: string; job?: CleanJob };
       if (!d.success) { setError(d.message || "Unable to start cleanup."); setCleaning(false); return; }
       if (!d.job) { setError("Cleanup job was not created."); setCleaning(false); return; }
+      setCleanTarget(d.job.target);
       setCleanResults(d.job.accounts);
       pollCleanJob(d.job.id);
     } catch (e: any) {
@@ -782,13 +790,24 @@ export default function Home() {
             <button
               type="button"
               className="send-btn mt-10"
-              onClick={cleanSent}
+              onClick={() => cleanFolder("sent")}
               disabled={cleaning || selected.size === 0}
             >
-              {cleaning ? "Cleaning..." : "Clean sent folder"}
+              {cleaning && cleanTarget === "sent" ? "Cleaning..." : "Clean sent folder"}
             </button>
             <p className="muted mt-6">
-              Fetches sent messages and moves them to trash one by one with a 0.5–1.5s random delay per message, emulating normal human behavior. Deleted messages stay in Trash for 30 days before permanent removal.
+              Moves every sent message to Trash with a 0.5–1.5s random delay per message. Messages stay recoverable in Trash for 30 days.
+            </p>
+            <button
+              type="button"
+              className="link-btn full mt-10"
+              onClick={() => cleanFolder("trash")}
+              disabled={cleaning || selected.size === 0}
+            >
+              {cleaning && cleanTarget === "trash" ? "Emptying trash..." : "Empty trash permanently"}
+            </button>
+            <p className="fail mt-6">
+              Permanently removes all messages currently in Trash. This cannot be undone.
             </p>
           </section>
           <section className="panel">
@@ -797,7 +816,13 @@ export default function Home() {
             {!cleanResults && !cleaning && (
               <p className="muted">Select accounts above and click Clean to begin.</p>
             )}
-            {cleaning && <p className="muted">Deleting messages with human-like delays...</p>}
+            {cleaning && (
+              <p className="muted">
+                {cleanTarget === "trash"
+                  ? "Permanently deleting trash messages with delays..."
+                  : "Moving sent messages to Trash with delays..."}
+              </p>
+            )}
             {cleanResults && (
               <div className="account-progress">
                 {Object.entries(cleanResults).map(([email, r]) => (
@@ -806,10 +831,16 @@ export default function Home() {
                     {r.error ? (
                       <span className="fail">{r.error}</span>
                     ) : r.total === 0 ? (
-                      <span className="muted">No sent messages found</span>
+                      <span className="muted">
+                        {cleanTarget === "trash"
+                          ? "No messages found in Trash"
+                          : "No sent messages found"}
+                      </span>
                     ) : (
                       <>
-                        <span className="ok">{r.deleted} deleted</span>
+                        <span className="ok">
+                          {r.deleted} {cleanTarget === "trash" ? "permanently deleted" : "moved to Trash"}
+                        </span>
                         <span className="fail">{r.failed} failed</span>
                       </>
                     )}
@@ -817,7 +848,7 @@ export default function Home() {
                 ))}
                 <div className="stats-row">
                   <span className="ok">
-                    Total deleted:{" "}
+                    Total {cleanTarget === "trash" ? "permanently deleted" : "moved to Trash"}:{" "}
                     {Object.values(cleanResults).reduce((s, r) => s + (r.deleted ?? 0), 0)}
                   </span>
                 </div>

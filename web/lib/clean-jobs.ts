@@ -1,4 +1,11 @@
-import { listSentMessages, trashMessage } from "./gmail";
+import {
+  deleteMessage,
+  listSentMessages,
+  listTrashMessages,
+  trashMessage,
+} from "./gmail";
+
+export type CleanTarget = "sent" | "trash";
 
 export interface CleanAccountProgress {
   total: number;
@@ -10,6 +17,7 @@ export interface CleanAccountProgress {
 export interface CleanJob {
   id: string;
   status: "running" | "done";
+  target: CleanTarget;
   accounts: Record<string, CleanAccountProgress>;
   startedAt: number;
   finishedAt?: number;
@@ -22,10 +30,11 @@ function pause(minMs: number, maxMs: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export function createCleanJob(accounts: string[]): CleanJob {
+export function createCleanJob(accounts: string[], target: CleanTarget): CleanJob {
   const job: CleanJob = {
     id: crypto.randomUUID(),
     status: "running",
+    target,
     accounts: Object.fromEntries(
       accounts.map((email) => [email, { total: 0, deleted: 0, failed: 0 }]),
     ),
@@ -46,12 +55,15 @@ export async function runCleanJob(jobId: string, accounts: string[]) {
   for (const email of accounts) {
     const progress = job.accounts[email];
     try {
-      const ids = await listSentMessages(email, Number.MAX_SAFE_INTEGER);
+      const ids = job.target === "trash"
+        ? await listTrashMessages(email, Number.MAX_SAFE_INTEGER)
+        : await listSentMessages(email, Number.MAX_SAFE_INTEGER);
       progress.total = ids.length;
       for (const id of ids) {
         await pause(500, 1500);
         try {
-          await trashMessage(email, id);
+          if (job.target === "trash") await deleteMessage(email, id);
+          else await trashMessage(email, id);
           progress.deleted++;
         } catch {
           progress.failed++;

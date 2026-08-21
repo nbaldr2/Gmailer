@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
-import { createCleanJob, getCleanJob, runCleanJob } from "@/lib/clean-jobs";
+import {
+  CleanTarget,
+  createCleanJob,
+  getCleanJob,
+  runCleanJob,
+} from "@/lib/clean-jobs";
 
 export async function POST(request: Request) {
   try {
@@ -7,6 +12,7 @@ export async function POST(request: Request) {
     const accounts: string[] = Array.isArray(body.accounts)
       ? body.accounts.filter((a: unknown) => typeof a === "string")
       : [];
+    const target: CleanTarget = body.target === "trash" ? "trash" : "sent";
     if (accounts.length === 0) {
       return NextResponse.json(
         { success: false, message: "No accounts selected" },
@@ -14,9 +20,9 @@ export async function POST(request: Request) {
       );
     }
 
-    const job = createCleanJob(accounts);
+    const job = createCleanJob(accounts, target);
     runCleanJob(job.id, accounts).catch((e) =>
-      console.error("Sent-folder clean job failed:", e),
+      console.error(`${target} cleanup job failed:`, e),
     );
     return NextResponse.json({ success: true, job });
   } catch (e: any) {

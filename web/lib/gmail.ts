@@ -132,8 +132,9 @@ export async function sendWithService(
   return res.data;
 }
 
-export async function listSentMessages(
+async function listMessagesByLabel(
   email: string,
+  labelId: string,
   maxResults = Number.MAX_SAFE_INTEGER,
 ): Promise<string[]> {
   const gmail = createGmailService(email);
@@ -142,7 +143,7 @@ export async function listSentMessages(
   while (ids.length < maxResults) {
     const res = await gmail.users.messages.list({
       userId: "me",
-      labelIds: ["SENT"],
+      labelIds: [labelId],
       maxResults: Math.min(500, maxResults - ids.length),
       pageToken,
     });
@@ -157,9 +158,31 @@ export async function listSentMessages(
   return ids;
 }
 
+export function listSentMessages(
+  email: string,
+  maxResults = Number.MAX_SAFE_INTEGER,
+): Promise<string[]> {
+  return listMessagesByLabel(email, "SENT", maxResults);
+}
+
+export function listTrashMessages(
+  email: string,
+  maxResults = Number.MAX_SAFE_INTEGER,
+): Promise<string[]> {
+  return listMessagesByLabel(email, "TRASH", maxResults);
+}
+
 export async function trashMessage(email: string, messageId: string): Promise<void> {
   const gmail = createGmailService(email);
   await gmail.users.messages.trash({
+    userId: "me",
+    id: messageId,
+  });
+}
+
+export async function deleteMessage(email: string, messageId: string): Promise<void> {
+  const gmail = createGmailService(email);
+  await gmail.users.messages.delete({
     userId: "me",
     id: messageId,
   });
