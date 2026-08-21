@@ -40,12 +40,11 @@ function parseRecipients(raw: string): string[] {
   for (const match of diagnosticFields) recipients.add(match[1].toLowerCase());
   if (recipients.size > 0) return [...recipients];
 
-  const fallback = raw.matchAll(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi);
+  const fallback = raw.matchAll(
+    /(?:following addresses had permanent fatal errors|delivery to the following recipient failed permanently)[^\r\n]*[\r\n\s]*<?([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})>?/gi,
+  );
   for (const match of fallback) {
-    const email = match[0].toLowerCase();
-    if (!email.includes("mailer-daemon") && !email.startsWith("postmaster@")) {
-      recipients.add(email);
-    }
+    recipients.add(match[1].toLowerCase());
   }
   return [...recipients];
 }
