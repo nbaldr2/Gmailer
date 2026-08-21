@@ -124,9 +124,10 @@ export function isAccountCooldownError(reason: string): boolean {
 export async function setAccountCooldown(
   accountEmail: string,
   reason: string,
+  cooldownUntil = new Date(Date.now() + 24 * 60 * 60 * 1000),
 ): Promise<void> {
+  if (cooldownUntil.getTime() <= Date.now()) return;
   const pool = await db();
-  const cooldownUntil = new Date(Date.now() + 24 * 60 * 60 * 1000);
   await pool.query(
     `INSERT INTO account_cooldowns (account_email, cooldown_until, reason)
      VALUES ($1, $2, $3)
@@ -324,7 +325,15 @@ export async function recordAccountLevelBounce(input: {
     );
     campaignId = latest.rows[0]?.campaign_id;
   }
-  if (!campaignId) return false;
+  if (!campaignId) {
+    campaignId = "unmatched-mailer-daemon";
+    await pool.query(
+      `INSERT INTO campaigns (id, name, from_name)
+       VALUES ($1, $2, NULL)
+       ON CONFLICT (id) DO NOTHING`,
+      [campaignId, "Unmatched Mailer-Daemon notices"],
+    );
+  }
   const recipientEmail = "Recipient not specified by Gmail";
   const result = await pool.query(
     `INSERT INTO campaign_rejections

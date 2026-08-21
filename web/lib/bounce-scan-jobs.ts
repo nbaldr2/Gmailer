@@ -95,10 +95,13 @@ export async function scanBounceAccounts(
         const reason = parseReason(message.raw);
         const newlyClaimed = await claimBounceForProcessing(account, messageId);
         if (isAccountCooldownError(reason)) {
-          try {
-            await setAccountCooldown(account, reason);
-          } catch (dbError) {
-            console.error("Unable to set account cooldown:", dbError);
+          const cooldownUntil = new Date(message.receivedAt + 24 * 60 * 60 * 1000);
+          if (cooldownUntil.getTime() > Date.now()) {
+            try {
+              await setAccountCooldown(account, reason, cooldownUntil);
+            } catch (dbError) {
+              console.error("Unable to set account cooldown:", dbError);
+            }
           }
           if (recipients.length === 0) {
             if (await recordAccountLevelBounce({
