@@ -3,11 +3,14 @@ import { RecipientRow, resolveTemplate } from "./template";
 import { appendAudit } from "./store";
 import {
   isAccountCooldownError,
+  isOAuthInvalidGrantError,
+  getAccountAuthErrors,
   getAccountCooldowns,
   recordAccountCooldownRejections,
   recordCampaignDelivery,
   recordRejection,
   setAccountCooldown,
+  setAccountAuthError,
 } from "./rejections-db";
 
 export interface JobLog {
@@ -136,6 +139,7 @@ export async function runJob(
     startIndex: number,
     reason: string,
     cooldownUntil = Date.now() + 24 * 60 * 60 * 1000,
+    kind: "account_cooldown" | "oauth_error" = "account_cooldown",
   ) => {
     const remaining = chunk.slice(startIndex).map((recipient) => ({
       email: recipient.email,
@@ -154,7 +158,10 @@ export async function runJob(
           campaignId: jobId,
           senderAccount: account,
           recipients: remaining,
-          reason: `Sender account cooldown: ${reason}`,
+          reason: kind === "oauth_error"
+            ? `OAuth reconnect required: ${reason}`
+            : `Sender account cooldown: ${reason}`,
+          kind,
         });
       } catch (dbError) {
         console.error("Unable to save cooldown rejections:", dbError);
@@ -168,7 +175,9 @@ export async function runJob(
     pushLog(jobId, {
       ts: Date.now(),
       account,
-      message: `Account entered a 24-hour cooldown. ${remaining.length} remaining recipient(s) saved as rejected.`,
+      message: kind === "oauth_error"
+        ? `OAuth reconnect required. ${remaining.length} remaining recipient(s) saved as rejected.`
+        : `Account entered a 24-hour cooldown. ${remaining.length} remaining recipient(s) saved as rejected.`,
       kind: "info",
     });
   };
@@ -200,6 +209,18 @@ export async function runJob(
       lastSentAt = Date.now();
       if (!settings.allowCooldownAccounts) {
         try {
+          const authError = (await getAccountAuthErrors([account]))[account];
+          if (authError) {
+            await stopAccountForCooldown(
+              account,
+              chunk,
+              j,
+              authError.reason,
+              Date.now() + 365 * 24 * 60 * 60 * 1000,
+              "oauth_error",
+            );
+            break;
+          }
           const cooldown = (await getAccountCooldowns([account]))[account];
           if (cooldown) {
             await stopAccountForCooldown(
@@ -263,6 +284,22 @@ export async function runJob(
         });
       } catch (e: any) {
         const failureReason = e.message || String(e);
+        if (isOAuthInvalidGrantError(failureReason)) {
+          try {
+            await setAccountAuthError(account, failureReason);
+          } catch (dbError) {
+            console.error("Unable to set account OAuth error:", dbError);
+          }
+          await stopAccountForCooldown(
+            account,
+            chunk,
+            j,
+            failureReason,
+            Date.now() + 365 * 24 * 60 * 60 * 1000,
+            "oauth_error",
+          );
+          break;
+        }
         const job = jobs.get(jobId);
         if (job) {
           job.failed++;

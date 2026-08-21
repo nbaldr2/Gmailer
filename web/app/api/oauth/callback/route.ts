@@ -4,6 +4,7 @@ import fs from "fs";
 import path from "path";
 import { cookies } from "next/headers";
 import { TOKEN_DIR, PROJECT_ROOT } from "@/lib/gmail";
+import { clearAccountAuthError, clearAccountCooldown } from "@/lib/rejections-db";
 
 const SCOPES = ["https://mail.google.com/"];
 
@@ -92,6 +93,12 @@ export async function GET(request: Request) {
       path.join(TOKEN_DIR, `token_gmail_v1_${email}.json`),
       JSON.stringify(tokenData, null, 2),
     );
+    try {
+      await clearAccountAuthError(email);
+      await clearAccountCooldown(email);
+    } catch (dbError) {
+      console.error("Unable to clear account status after OAuth reconnect:", dbError);
+    }
 
     return NextResponse.redirect(
       new URL(`/?connected=${encodeURIComponent(email)}`, origin),

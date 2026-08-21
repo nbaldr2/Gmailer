@@ -5,9 +5,11 @@ import {
 import {
   claimBounceForProcessing,
   isAccountCooldownError,
+  isOAuthInvalidGrantError,
   recordAccountLevelBounce,
   recordMailerDaemonBounce,
   setAccountCooldown,
+  setAccountAuthError,
 } from "./rejections-db";
 
 export interface BounceScanAccountProgress {
@@ -128,7 +130,15 @@ export async function scanBounceAccounts(
         }
       }
     } catch (e: any) {
-      progress.error = e.message || String(e);
+      const reason = e.message || String(e);
+      progress.error = reason;
+      if (isOAuthInvalidGrantError(reason)) {
+        try {
+          await setAccountAuthError(account, reason);
+        } catch (dbError) {
+          console.error("Unable to set account OAuth error:", dbError);
+        }
+      }
     }
   }));
 }

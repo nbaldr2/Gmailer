@@ -48,7 +48,7 @@ interface CleanJob {
 interface RejectedRecipient {
   recipientEmail: string;
   senderAccount: string;
-  kind: "gmail_api" | "mailer_daemon" | "account_cooldown";
+  kind: "gmail_api" | "mailer_daemon" | "account_cooldown" | "oauth_error";
   reason: string;
   detectedAt: string;
 }
@@ -109,6 +109,11 @@ interface SendStats {
 interface AccountCooldown {
   cooldownUntil: string;
   reason: string;
+}
+
+interface AccountAuthError {
+  reason: string;
+  detectedAt: string;
 }
 
 const SAMPLE: RecipientRow = {
@@ -183,6 +188,7 @@ export default function Home() {
   const [tab, setTab] = useState<Tab>("compose");
   const [accounts, setAccounts] = useState<string[]>([]);
   const [accountCooldowns, setAccountCooldowns] = useState<Record<string, AccountCooldown>>({});
+  const [accountAuthErrors, setAccountAuthErrors] = useState<Record<string, AccountAuthError>>({});
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [recipients, setRecipients] = useState<RecipientRow[]>([]);
   const [recipientsText, setRecipientsText] = useState("");
@@ -257,7 +263,11 @@ export default function Home() {
       const res = await fetch("/api/accounts");
       const d = await parseApiJson(res) as {
         success: boolean;
-        accounts?: Array<{ email: string; cooldown?: AccountCooldown | null }>;
+        accounts?: Array<{
+          email: string;
+          cooldown?: AccountCooldown | null;
+          authError?: AccountAuthError | null;
+        }>;
       };
       if (!d.success || !d.accounts) return;
       setAccounts(d.accounts.map((account) => account.email));
@@ -267,6 +277,11 @@ export default function Home() {
           : []),
       );
       setAccountCooldowns(cooldowns);
+      setAccountAuthErrors(Object.fromEntries(
+        d.accounts.flatMap((account) => account.authError
+          ? [[account.email, account.authError] as const]
+          : []),
+      ));
     } catch (e) {
       console.error("Unable to load accounts:", e);
     }
@@ -319,6 +334,11 @@ export default function Home() {
       if (!d.success) { setError(d.message); return; }
       setAccounts((prev) => prev.filter((a) => a !== email));
       setAccountCooldowns((prev) => {
+        const next = { ...prev };
+        delete next[email];
+        return next;
+      });
+      setAccountAuthErrors((prev) => {
         const next = { ...prev };
         delete next[email];
         return next;
@@ -773,10 +793,12 @@ export default function Home() {
                   <label className="account-label">
                     <input type="checkbox" checked={selected.has(email)} onChange={() => toggleAccount(email)} />
                     <span
-                      className={`account-status-dot ${accountCooldowns[email] ? "cooldown" : ""}`}
-                      title={accountCooldowns[email]
-                        ? `Cooldown until ${new Date(accountCooldowns[email].cooldownUntil).toLocaleString()}: ${accountCooldowns[email].reason}`
-                        : "Available to send"}
+                      className={`account-status-dot ${accountAuthErrors[email] ? "auth-error" : accountCooldowns[email] ? "cooldown" : ""}`}
+                      title={accountAuthErrors[email]
+                        ? `OAuth reconnect required: ${accountAuthErrors[email].reason}`
+                        : accountCooldowns[email]
+                          ? `Cooldown until ${new Date(accountCooldowns[email].cooldownUntil).toLocaleString()}: ${accountCooldowns[email].reason}`
+                          : "Available to send"}
                     />
                     <span className="account-name">{email}</span>
                   </label>
@@ -1093,6 +1115,8 @@ export default function Home() {
                           ? "Mailer-Daemon"
                           : rejection.kind === "account_cooldown"
                             ? "Account cooldown"
+                            : rejection.kind === "oauth_error"
+                              ? "OAuth reconnect required"
                             : "Gmail API"}
                       </span>
                       <span className="fail ml-4">{rejection.reason}</span>
@@ -1122,10 +1146,12 @@ export default function Home() {
                   <label className="account-label">
                     <input type="checkbox" checked={selected.has(email)} onChange={() => toggleAccount(email)} />
                     <span
-                      className={`account-status-dot ${accountCooldowns[email] ? "cooldown" : ""}`}
-                      title={accountCooldowns[email]
-                        ? `Cooldown until ${new Date(accountCooldowns[email].cooldownUntil).toLocaleString()}: ${accountCooldowns[email].reason}`
-                        : "Available to send"}
+                      className={`account-status-dot ${accountAuthErrors[email] ? "auth-error" : accountCooldowns[email] ? "cooldown" : ""}`}
+                      title={accountAuthErrors[email]
+                        ? `OAuth reconnect required: ${accountAuthErrors[email].reason}`
+                        : accountCooldowns[email]
+                          ? `Cooldown until ${new Date(accountCooldowns[email].cooldownUntil).toLocaleString()}: ${accountCooldowns[email].reason}`
+                          : "Available to send"}
                     />
                     <span className="account-name">{email}</span>
                   </label>

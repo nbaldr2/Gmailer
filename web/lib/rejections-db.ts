@@ -16,7 +16,7 @@ interface RejectionInput {
   deliveryId?: number;
   recipientEmail: string;
   senderAccount: string;
-  kind: "gmail_api" | "mailer_daemon" | "account_cooldown";
+  kind: "gmail_api" | "mailer_daemon" | "account_cooldown" | "oauth_error";
   reason: string;
   bounceMessageId?: string;
 }
@@ -24,7 +24,7 @@ interface RejectionInput {
 export interface RejectedRecipient {
   recipientEmail: string;
   senderAccount: string;
-  kind: "gmail_api" | "mailer_daemon" | "account_cooldown";
+  kind: "gmail_api" | "mailer_daemon" | "account_cooldown" | "oauth_error";
   reason: string;
   detectedAt: string;
 }
@@ -40,6 +40,11 @@ export interface RejectedCampaign {
 export interface AccountCooldown {
   cooldownUntil: string;
   reason: string;
+}
+
+export interface AccountAuthError {
+  reason: string;
+  detectedAt: string;
 }
 
 const globalWithDb = globalThis as typeof globalThis & {
@@ -107,11 +112,16 @@ async function ensureSchema(): Promise<void> {
         reason TEXT NOT NULL,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
+      CREATE TABLE IF NOT EXISTS account_auth_errors (
+        account_email TEXT PRIMARY KEY,
+        reason TEXT NOT NULL,
+        detected_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
       ALTER TABLE campaign_rejections
         DROP CONSTRAINT IF EXISTS campaign_rejections_kind_check;
       ALTER TABLE campaign_rejections
         ADD CONSTRAINT campaign_rejections_kind_check
-        CHECK (kind IN ('gmail_api', 'mailer_daemon', 'account_cooldown'));
+        CHECK (kind IN ('gmail_api', 'mailer_daemon', 'account_cooldown', 'oauth_error'));
     `);
   })();
   return globalWithDb.__gmailerDbSchema;
@@ -119,6 +129,10 @@ async function ensureSchema(): Promise<void> {
 
 export function isAccountCooldownError(reason: string): boolean {
   return /message rejected|reached a limit for sending|sending limit|sending quota|daily user sending quota|rate limit|user.?rate.?limit|too many requests|account.+limit/i.test(reason);
+}
+
+export function isOAuthInvalidGrantError(reason: string): boolean {
+  return /invalid_grant|token has been expired or revoked|invalid refresh token/i.test(reason);
 }
 
 export async function setAccountCooldown(
@@ -167,6 +181,49 @@ export async function clearAccountCooldown(accountEmail: string): Promise<void> 
     "DELETE FROM account_cooldowns WHERE account_email = $1",
     [accountEmail],
   );
+}
+
+export async function setAccountAuthError(
+  accountEmail: string,
+  reason: string,
+): Promise<void> {
+  const pool = await db();
+  await pool.query(
+    `INSERT INTO account_auth_errors (account_email, reason)
+     VALUES ($1, $2)
+     ON CONFLICT (account_email) DO UPDATE
+     SET reason = EXCLUDED.reason, detected_at = NOW()`,
+    [accountEmail, reason.slice(0, 1200)],
+  );
+}
+
+export async function clearAccountAuthError(accountEmail: string): Promise<void> {
+  const pool = await db();
+  await pool.query(
+    "DELETE FROM account_auth_errors WHERE account_email = $1",
+    [accountEmail],
+  );
+}
+
+export async function getAccountAuthErrors(
+  accounts: string[],
+): Promise<Record<string, AccountAuthError>> {
+  const pool = await db();
+  if (accounts.length === 0) return {};
+  const result = await pool.query<{
+    account_email: string;
+    reason: string;
+    detected_at: string;
+  }>(
+    `SELECT account_email, reason, detected_at
+     FROM account_auth_errors
+     WHERE account_email = ANY($1::text[])`,
+    [accounts],
+  );
+  return Object.fromEntries(result.rows.map((row) => [
+    row.account_email,
+    { reason: row.reason, detectedAt: row.detected_at },
+  ]));
 }
 
 async function db(): Promise<Pool> {
@@ -232,6 +289,7 @@ export async function recordAccountCooldownRejections(input: {
   senderAccount: string;
   recipients: Array<{ email: string; subject: string }>;
   reason: string;
+  kind?: "account_cooldown" | "oauth_error";
 }): Promise<number> {
   if (input.recipients.length === 0) return 0;
   const pool = await db();
@@ -247,10 +305,17 @@ export async function recordAccountCooldownRejections(input: {
      )
      INSERT INTO campaign_rejections
        (campaign_id, delivery_id, recipient_email, sender_account, kind, reason)
-     SELECT $1, id, recipient_email, $2, 'account_cooldown', $3
+     SELECT $1, id, recipient_email, $2, $6, $3
      FROM inserted
      RETURNING id`,
-    [input.campaignId, input.senderAccount, input.reason.slice(0, 1200), emails, subjects],
+    [
+      input.campaignId,
+      input.senderAccount,
+      input.reason.slice(0, 1200),
+      emails,
+      subjects,
+      input.kind ?? "account_cooldown",
+    ],
   );
   return result.rowCount ?? 0;
 }
@@ -390,7 +455,7 @@ export async function listRejectedCampaigns(): Promise<RejectedCampaign[]> {
     created_at: string;
     recipient_email: string;
     sender_account: string;
-    kind: "gmail_api" | "mailer_daemon" | "account_cooldown";
+    kind: "gmail_api" | "mailer_daemon" | "account_cooldown" | "oauth_error";
     reason: string;
     detected_at: string;
   }>(
@@ -430,7 +495,7 @@ export async function listCampaignRejections(campaignId: string): Promise<Reject
   const result = await pool.query<{
     recipient_email: string;
     sender_account: string;
-    kind: "gmail_api" | "mailer_daemon" | "account_cooldown";
+    kind: "gmail_api" | "mailer_daemon" | "account_cooldown" | "oauth_error";
     reason: string;
     detected_at: string;
   }>(

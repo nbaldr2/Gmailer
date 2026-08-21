@@ -1,11 +1,17 @@
 import { NextResponse } from "next/server";
 import { sendOne } from "@/lib/gmail";
-import { clearAccountCooldown } from "@/lib/rejections-db";
+import {
+  clearAccountAuthError,
+  clearAccountCooldown,
+  isOAuthInvalidGrantError,
+  setAccountAuthError,
+} from "@/lib/rejections-db";
 
 export async function POST(request: Request) {
+  let account = "";
   try {
     const body = await request.json();
-    const account = String(body.account ?? "").trim();
+    account = String(body.account ?? "").trim();
     const to = String(body.to ?? "").trim();
     const subject = String(body.subject ?? "").trim();
     const fromName = body.fromName ? String(body.fromName).trim() : null;
@@ -20,6 +26,7 @@ export async function POST(request: Request) {
     const res = await sendOne(account, to, subject, fromName, html);
     try {
       await clearAccountCooldown(account);
+      await clearAccountAuthError(account);
     } catch (e) {
       console.error("Unable to clear account cooldown after test send:", e);
     }
@@ -29,6 +36,11 @@ export async function POST(request: Request) {
       threadId: res.threadId,
     });
   } catch (e: any) {
+    if (account && isOAuthInvalidGrantError(e.message || String(e))) {
+      try {
+        await setAccountAuthError(account, e.message || String(e));
+      } catch {}
+    }
     return NextResponse.json(
       { success: false, message: e.message || String(e) },
       { status: 500 },

@@ -373,6 +373,12 @@ button {
   box-shadow: 0 0 0 3px rgba(217, 95, 82, 0.14);
 }
 
+.account-status-dot.auth-error {
+  background: #b24b40;
+  border-color: #762d27;
+  box-shadow: 0 0 0 3px rgba(178, 75, 64, 0.18);
+}
+
 .trash-btn {
   display: inline-flex;
   flex: 0 0 auto;

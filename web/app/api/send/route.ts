@@ -3,7 +3,11 @@ import { createJob, runJob, SendSettings } from "@/lib/jobs";
 import { RecipientRow, validateEmail } from "@/lib/template";
 import { listAccounts } from "@/lib/gmail";
 import { getSuppressionList } from "@/lib/store";
-import { createCampaign, getAccountCooldowns } from "@/lib/rejections-db";
+import {
+  createCampaign,
+  getAccountAuthErrors,
+  getAccountCooldowns,
+} from "@/lib/rejections-db";
 import { startRejectionMonitor } from "@/lib/rejection-monitor";
 
 const DEFAULT_SETTINGS: SendSettings = {
@@ -50,15 +54,17 @@ export async function POST(request: Request) {
       );
     }
     const cooldowns = await getAccountCooldowns(accounts);
+    const authErrors = await getAccountAuthErrors(accounts);
     const sendAccounts = settings.allowCooldownAccounts
-      ? accounts
-      : accounts.filter((account) => !cooldowns[account]);
+      ? accounts.filter((account) => !authErrors[account])
+      : accounts.filter((account) => !cooldowns[account] && !authErrors[account]);
     if (sendAccounts.length === 0) {
       return NextResponse.json(
         {
           success: false,
-          message: "All selected accounts are in a 24-hour sending cooldown.",
+          message: "All selected accounts need OAuth reconnection or are in a 24-hour sending cooldown.",
           cooldowns,
+          authErrors,
         },
         { status: 429 },
       );
